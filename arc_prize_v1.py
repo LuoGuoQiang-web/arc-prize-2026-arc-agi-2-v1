@@ -70,6 +70,7 @@ DEFAULTS = {
     "enable_depth2": True,
     "enable_object_family": True,   # spend the 2nd attempt on a different hypothesis class
     "enable_context_family": True,  # prefer the context-conditioned class for that slot
+    "enable_shape_family": True,    # shape-changing / counting family (ranks above priors)
     "max_chains": 4000,
     "per_task_seconds": 60.0,
     "global_budget_seconds": 7200.0,
@@ -1077,6 +1078,214 @@ def context_candidates(task, bg, max_candidates: int = 40):
     return out
 
 
+# --------------------------------------------------------------------------------------
+# 3d. Shape-changing / counting family (v3)
+#
+# Why: ~31% of eval tasks change the output shape, and every other family here is nearly
+# shape-preserving (they fit per-cell colour maps or object recolouring, both needing matching
+# shapes). On the real 240-task test set this family validates on 5 tasks, three of which no
+# other family reaches, raising union coverage from 12/240 to 15/240.
+#
+# Precision is deliberately accounted for: on the training split this family's first proposal
+# is correct only ~56% of the time (counting maps fit coincidentally), versus ~96-100% for the
+# geometry/object/context families. Its candidates therefore rank BELOW every geometry chain
+# and ABOVE the unvalidated priors, so they can only ever replace a prior guess.
+# --------------------------------------------------------------------------------------
+
+V3_MAX = 30
+
+
+def _v3_sub(grid, bbox):
+    r0, c0, r1, c1 = bbox
+    out = [[grid[r][c] for c in range(c0, c1 + 1)] for r in range(r0, r1 + 1)]
+    return out if len(out) <= V3_MAX and len(out[0]) <= V3_MAX else None
+
+
+def _v3_bbox_nonbg(grid, bg):
+    pts = [(r, c) for r, row in enumerate(grid) for c, v in enumerate(row) if v != bg]
+    if not pts:
+        return None
+    rs = [p[0] for p in pts]
+    cs = [p[1] for p in pts]
+    return min(rs), min(cs), max(rs), max(cs)
+
+
+def _v3_scale(grid, k, up=True):
+    h, w = grid_shape(grid)
+    if up:
+        nh, nw = h * k, w * k
+        if nh > V3_MAX or nw > V3_MAX:
+            return None
+        return [[grid[r // k][c // k] for c in range(nw)] for r in range(nh)]
+    if h % k or w % k:
+        return None
+    return [[grid[r * k][c * k] for c in range(w // k)] for r in range(h // k)]
+
+
+def _v3_holes(grid, bg):
+    """Number of background regions fully enclosed by non-background cells."""
+    h, w = grid_shape(grid)
+    seen = [[False] * w for _ in range(h)]
+    queue = deque()
+    for r in range(h):
+        for c in (0, w - 1):
+            if grid[r][c] == bg and not seen[r][c]:
+                seen[r][c] = True
+                queue.append((r, c))
+    for c in range(w):
+        for r in (0, h - 1):
+            if grid[r][c] == bg and not seen[r][c]:
+                seen[r][c] = True
+                queue.append((r, c))
+    while queue:
+        y, x = queue.popleft()
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < h and 0 <= nx < w and not seen[ny][nx] and grid[ny][nx] == bg:
+                seen[ny][nx] = True
+                queue.append((ny, nx))
+    holes = 0
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == bg and not seen[r][c]:
+                holes += 1
+                seen[r][c] = True
+                qq = deque([(r, c)])
+                while qq:
+                    y, x = qq.popleft()
+                    for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                        ny, nx = y + dy, x + dx
+                        if 0 <= ny < h and 0 <= nx < w and not seen[ny][nx] and grid[ny][nx] == bg:
+                            seen[ny][nx] = True
+                            qq.append((ny, nx))
+    return holes
+
+
+def _v3_counts(grid, bg):
+    objs = obj_objects_of(grid, bg)
+    sizes = [o["size"] for o in objs]
+    return {
+        "n_objects": len(objs),
+        "n_colors": len({v for row in grid for v in row}),
+        "n_nonbg": sum(1 for row in grid for v in row if v != bg),
+        "n_bg": sum(1 for row in grid for v in row if v == bg),
+        "max_obj_size": max(sizes) if sizes else 0,
+        "min_obj_size": min(sizes) if sizes else 0,
+        "n_holes": _v3_holes(grid, bg),
+    }
+
+
+def _v3_trim(grid):
+    keep_r = [i for i, row in enumerate(grid) if len(set(row)) > 1]
+    keep_c = [j for j in range(len(grid[0])) if len({grid[i][j] for i in range(len(grid))}) > 1]
+    if not keep_r or not keep_c:
+        return [row[:] for row in grid]
+    return [[grid[i][j] for j in keep_c] for i in keep_r]
+
+
+def _v3_builders(bg):
+    """Candidate generators for the shape-changing / counting family (bg is task-specific)."""
+    out = []
+    for pred in ("largest", "smallest", "unique_color"):
+        def make(pred=pred):
+            def fn(grid):
+                objs = obj_objects_of(grid, bg)
+                if not objs:
+                    return None
+                if pred == "largest":
+                    pick = max(objs, key=lambda o: o["size"])
+                elif pred == "smallest":
+                    pick = min(objs, key=lambda o: o["size"])
+                else:
+                    cnt = Counter(o["color"] for o in objs)
+                    uniq = [o for o in objs if cnt[o["color"]] == 1]
+                    if not uniq:
+                        return None
+                    pick = uniq[0]
+                return _v3_sub(grid, pick["bbox"])
+            return fn
+        out.append((f"v3crop_obj_{pred}", make()))
+
+    for color in range(10):
+        if color == bg:
+            continue
+
+        def make_rm(color=color):
+            def fn(grid):
+                erased = [[bg if v == color else v for v in row] for row in grid]
+                b = _v3_bbox_nonbg(erased, bg)
+                return None if b is None else _v3_sub(erased, b)
+            return fn
+
+        out.append((f"v3rmcolor{color}_crop", make_rm()))
+
+    for k in (2, 3, 4):
+        out.append((f"v3up{k}", (lambda kk: (lambda g: _v3_scale(g, kk, True)))(k)))
+        out.append((f"v3down{k}", (lambda kk: (lambda g: _v3_scale(g, kk, False)))(k)))
+
+    def trim_crop(grid):
+        trimmed = _v3_trim(grid)
+        b = _v3_bbox_nonbg(trimmed, bg)
+        return None if b is None else _v3_sub(trimmed, b)
+
+    out.append(("v3trim_crop", trim_crop))
+
+    def ring(grid):
+        h, w = grid_shape(grid)
+        if h > V3_MAX or w > V3_MAX:
+            return None
+        return [[grid[r][c] if (r in (0, h - 1) or c in (0, w - 1)) else bg for c in range(w)]
+                for r in range(h)]
+
+    out.append(("v3ring", ring))
+    return out
+
+
+def shape_candidates(task, bg, max_candidates: int = 120):
+    """Verified shape-changing / counting candidates: [(name, fn)] with fn: grid -> grid | None."""
+    pairs = task["train"]
+    good = []
+
+    def reproduces(fn):
+        for p in pairs:
+            try:
+                if fn(p["input"]) != p["output"]:
+                    return False
+            except Exception:
+                return False
+        return True
+
+    for name, fn in _v3_builders(bg):
+        if len(good) >= max_candidates:
+            break
+        if reproduces(fn):
+            good.append((name, fn))
+
+    # Counting family: a 1x1 output whose value is a fitted map of some input count.
+    if pairs and all(grid_shape(p["output"]) == (1, 1) for p in pairs):
+        for feat in ("n_objects", "n_colors", "n_nonbg", "n_bg", "max_obj_size",
+                     "min_obj_size", "n_holes"):
+            mapping = {}
+            ok = True
+            for p in pairs:
+                v = _v3_counts(p["input"], bg)[feat]
+                t = p["output"][0][0]
+                if mapping.get(v, t) != t:
+                    ok = False
+                    break
+                mapping[v] = t
+            if not ok or not mapping:
+                continue
+
+            def fn(grid, feat=feat, mapping=mapping):
+                v = _v3_counts(grid, bg)[feat]
+                return None if v not in mapping else [[mapping[v]]]
+
+            if len(good) < max_candidates:
+                good.append((f"v3count_{feat}", fn))
+    return good
+
+
 def _context_second_prediction(task, bg, test, first_outs):
     """Pick the context-conditioned prediction for the second attempt, or None.
 
@@ -1126,6 +1335,17 @@ def solve_task(task, cfg, task_deadline=None):
     candidates = []
     try:
         candidates.extend(build_search_candidates(task, bg, cfg))
+        # v3 (shape-changing / counting) candidates are verified by construction, but ranked
+        # below every geometry chain (depth 3) and above the unvalidated priors (tier 1),
+        # because their measured precision is ~56% versus ~96-100% for the other families.
+        if cfg.get("enable_shape_family", True):
+            for seq, (v3_name, v3_fn) in enumerate(shape_candidates(task, bg)):
+                candidates.append({
+                    "rank": (0, 3, 0, seq, v3_name),
+                    "name": v3_name,
+                    "prevalidated": True,
+                    "fn": v3_fn,
+                })
         candidates.extend(_priority_candidates(task))
     except Exception:
         diagnostics["build_error"] = traceback.format_exc(limit=3)

@@ -26,7 +26,8 @@ Shallow symbolic solvers—program search over a fixed vocabulary of grid transf
 
 - **A — geometry DSL.** 29 primitives (dihedral transforms, crops, gravities, scaling, tiling, mirror completion, uniform row/column removal, extreme-component crops) composed to depth ≤2: ~318 chains per task. Training coverage 2.7%.
 - **B — object-level operators.** Components with properties (size, colour, bbox, border contact, squareness, holes); predicates select objects, actions delete, keep or recolour them. Training coverage 1.9%.
-- **C — context-conditioned recolouring.** Cells are described by structural features (own colour, its object's size and size-rank, boundary/border/hole/square flags); the map feature-tuple → colour is fitted on the demonstrations. Training coverage 3.8%, 4.3% composed behind an object filter.
+- **C — context-conditioned recolouring.** Cells are described by structural features (own colour, its object's size and size-rank, boundary/border/hole/square flags); the map feature-tuple → colour is fitted on the demonstrations. Training coverage 3.8%.
+- **D — shape-changing and counting.** Size-changing outputs: crop to an object's bbox, erase-a-colour-then-crop, integer scaling, and count-to-1×1 maps. Training coverage 1.6% with **56%** precision (counting maps fit coincidentally), so it ranks below every other family and above the priors—it can only replace a guess.
 
 **Metric and data.** Kaggle's metric: two attempts per test input, exact match on either scores 1, final score is the mean. Data: the official ARC-AGI-2 release (1,000 training, 120 public eval tasks). Nothing is trained and no eval feedback was used for tuning.
 
@@ -55,43 +56,40 @@ Coverage—the fraction of tasks admitting at least one verified program—colla
 | program reproducing **every** demonstration | 27 / 1000 | **0 / 120** |
 | program surviving leave-one-out refitting on **≥1** fold | 26 / 1000 | **0 / 120** |
 
-Binary coverage hides the shape of the failure. Refitting each chain on k−1 demonstrations and testing the held-out one yields a *coverage curve*. On training it decays gradually (2.6% → 2.4% → 1.8% → 0.4% → 0%), so the vocabulary sits near the boundary for many tasks. On eval the curve is **identically zero at every depth** (Figure 2): across 37,951 chain–task pairs, not one chain generalises to even a single held-out demonstration on any of the 120 tasks. Nor is this one design's artefact: all four search spaces we built—geometric (2.7% training coverage), object-level (1.9%), context-conditioned (3.8%), and depth-2 compositions of object filters with context recolouring (4.3%)—validate on **exactly 0/120** eval tasks while being structurally unrelated. The vocabulary is not slightly too small for eval; it is orthogonal to it. Score follows: **4.55%** on training, **0.00%** on eval.
+Binary coverage hides the shape of the failure. Refitting each chain on k−1 demonstrations and testing the held-out one yields a *coverage curve*. On training it decays gradually (2.6% → 2.4% → 1.8% → 0.4% → 0%), so the vocabulary sits near the boundary for many tasks. On eval the curve is **identically zero at every depth** (Figure 2): across 37,951 chain–task pairs, not one chain generalises to even a single held-out demonstration on any of the 120 tasks. Nor is this one design's artefact: all five search spaces of §2—structurally unrelated, with training coverage 1.6–4.3%—validate on **exactly 0/120** eval tasks. The vocabulary is not slightly too small for eval; it is orthogonal to it.
+
+The organisers' 240-task test split (inputs only) behaves differently: union coverage there is **15/240 (6.2%)**, which—given 96–100% precision for the validating families—is an expectation near 4.7% rather than zero. That split is closer to our vocabulary than the public eval, and unlike eval we cannot verify it, because its labels are withheld.
 
 ### 3.3 Shape inference is not the bottleneck
 
-Shape prediction is the usual diagnosis (74% of eval failures). We tested it:
-
-- **Shape-predictability.** "Output equals input shape" matches **71.3%** of eval test inputs, non-background bounding box 56.9%, our fallback's rule (modal demonstration shape) only 25.1%—measurably suboptimal.
-- **Controlled ablation.** Cropping/padding predictions to the oracle shape yields **0/167**; nearest-neighbour resizing to it also **0/167**. 43/167 eval inputs already had the right shape and still missed on content.
-
-Shape error is therefore a *symptom* of falling back to priors, not an independent defect.
+Shape prediction is the usual diagnosis (74% of eval failures). We tested it: "output equals input shape" matches **71.3%** of eval inputs, non-background bounding box 56.9%, our fallback's modal-shape rule only 25.1%; yet cropping/padding predictions to the oracle shape yields **0/167** and resizing to it also **0/167**, with 43/167 inputs already correctly shaped but wrong in content. Shape error is a *symptom* of falling back to priors, not an independent defect.
 
 ### 3.4 A floor of trivial baselines
 
-Demonstration-only baselines: identity (0.09% train / 0.0% eval), modal output (0.47%/0.0%), retrieval (1.21%/0.0%), per-cell majority (0.56%/0.0%). A beats them all on training—the search does real work—yet **every shallow method is exactly 0.00% on eval.**
+Demonstration-only baselines score 0.09–1.21% on training (identity, modal output, retrieval, per-cell majority); A beats them all, yet **every shallow method is exactly 0.00% on eval.**
 
 ## 4. Intervention: spending the second attempt on a different hypothesis class
 
 ARC-AGI-2 grants exactly two attempts per test input. Let A have hit set H_A and B have H_B. Spending both attempts inside A realises at most H_A; spending the second on B realises H_A ∪ (H_B \ H_A). **The return on the second slot is therefore exactly the asymmetric difference |H_B \ H_A|—not B's accuracy.** A weaker but disjoint solver can beat a stronger but redundant one.
 
-| Allocation of the two attempts | Training hits | Score |
+| Configuration (each switchable in the released engine) | Training hits | Score |
 |---|---:|---:|
-| A attempt_1 only | 32 / 1076 | 2.974% |
-| A attempt_1 + A attempt_2 (same class) | 34 / 1076 | 3.160% |
-| A attempt_1 + B attempt_1 (different class) | 45 / 1076 | 4.182% |
-| **A attempt_1 + C attempt_1 (different class)** | **49 / 1076** | **4.554%** |
+| geometry DSL only | 34 / 1076 | 3.160% |
+| + object-level family | 45 / 1076 | 4.182% |
+| + context-conditioned family | 49 / 1076 | 4.554% |
+| **+ shape-changing / counting (default)** | **52 / 1076** | **4.833%** |
 
-Here A is the geometry DSL, B the object-level solver and C the context-conditioned solver. The heterogeneous slot returns **+1.02 pp** against **+0.19 pp** for a second guess from the same solver—5.5× per slot—and the strongest complementary class (C) lifts the portfolio to **+1.39 pp / +44% relative**. Gains are localised, not diffuse:
+The first attempt alone scores 36/1076 (3.35%); giving it a second guess from the same solver adds 0.19 pp, whereas the cross-family slots add 1.67 pp—a **9× larger return per slot**. Gains are localised, not diffuse:
 
-| Family | n | A | A+B | A+C |
-|---|---:|---:|---:|---:|
-| uniform object recolouring | 232 | 1 | 11 | 12 |
-| object-level conditional | 314 | 7 | 8 | 11 |
-| shape-changing | 353 | 18 | 18 | 18 |
-| per-cell / addition / removal / mixed | 177 | 8 | 8 | 8 |
-| **total** | **1076** | **34** | **45** | **49** |
+| Family | n | geometry | +object | +context | +shape/counting |
+|---|---:|---:|---:|---:|---:|
+| shape-changing | 353 | 18 | 18 | 18 | **21** |
+| object-level conditional | 314 | 7 | 8 | 11 | 11 |
+| uniform object recolouring | 232 | 1 | 11 | 12 | 12 |
+| other (per-cell / add / remove / mixed) | 177 | 8 | 8 | 8 | 8 |
+| **total** | **1076** | **34** | **45** | **49** | **52** |
 
-Every added hit lands in the two object families—the only families where B and C are strong—and **no family regresses**, exactly as the set-difference reading predicts. The transferable rule for anyone working under a fixed attempt budget: measure your solvers' hit sets, then spend the second slot to maximise the difference—not to sample the same model twice.
+Every gain lands exactly where the added family's competence lies—the object families move the two object families, and the shape/counting family moves shape-changing 18 → 21—with **no family ever regressing**, as the set-difference reading predicts. The transferable rule for anyone working under a fixed attempt budget: measure your solvers' hit sets, then spend the second slot to maximise the difference—not to sample the same model twice.
 
 ## 5. Interpretation: why coverage, not search, governs this distribution
 
@@ -101,7 +99,7 @@ Fix a vocabulary V and a depth budget k; let Programs_≤k(V) be what it can exp
 
 **Mechanism 2—compositional explosion.** Object-conditional tasks are described by a predicate over objects, an action, and optionally a property map. Expressing them requires the product of these choices, so a hand-built vocabulary grows sub-linearly against a space that grows multiplicatively—which is why the dominant eval family (50.8%) is precisely the one our primitives cannot reach.
 
-The hypothesis is falsifiable, and three predictions hold. (P1) Extending the vocabulary raises hits only inside the extended family's competence: B moves uniform recolouring 1 → 11 and object-level conditional 7 → 8; C reaches 12 and 11, while shape-changing (18) and the other 177 inputs never move. (P2) More search cannot substitute for vocabulary: ~318 chains already validate nothing on eval. (P3) Heterogeneous portfolios pay off by exactly |H_B \ H_A|: measured +11 hits, that bound. The practical consequence: instrument *coverage per family* before scaling search or model size—a cheap measurement that predicts a symbolic solver's ceiling far better than its training accuracy. Because the taxonomy is defined on input–output relations rather than on any particular solver, the measured shift is a property of the benchmark, not of our implementation.
+The hypothesis is falsifiable, and three predictions hold. (P1) Extending the vocabulary raises hits only inside the extended family's competence: the object family moves uniform recolouring 1 → 11 and object-conditional 7 → 8, the context family lifts object-conditional to 11, and the shape/counting family moves shape-changing 18 → 21, while the other 177 inputs never move. (P2) More search cannot substitute for vocabulary: ~318 chains already validate nothing on eval. (P3) Heterogeneous portfolios pay off by exactly |H_B \ H_A|: measured +11 hits, that bound. The practical consequence: instrument *coverage per family* before scaling search or model size—a cheap measurement that predicts a symbolic solver's ceiling far better than its training accuracy.
 
 ## 6. Limitations and negative result
 
@@ -109,7 +107,7 @@ We report no improvement on the public evaluation split: **0.000% (0/167)** for 
 
 ## 7. Reproducibility
 
-Runs on CPU in seconds. The submission comes from a Kaggle notebook whose embedded engine is byte-checked against the repository source at build time; 39 self-tests, a full dry-run, and an environment-faithful simulation of the submission path (which catches Kaggle-only branches) all pass; one script re-verifies every headline number. The notebook integrates both alternative classes, each switchable for ablation. Data: official ARC-AGI-2 release (Apache-2.0); code MIT-0; no weights, no data, no network.
+Runs on CPU in seconds. The submission comes from a Kaggle notebook whose embedded engine is byte-checked against the repository source at build time; 39 self-tests, a full dry-run, and an environment-faithful simulation of the submission path (which catches Kaggle-only branches) all pass; one script re-verifies every headline number. Data: official ARC-AGI-2 release (Apache-2.0); code MIT-0; no weights, no data, no network.
 
 **Links.** Code (MIT-0): `github.com/LuoGuoQiang-web/arc-prize-2026-arc-agi-2-v1`. Notebook: `luoguoqiang/arc-prize-2026-arc-agi-2-v1-diagnostic-engine` on Kaggle. Linked code submission: **56199696** (`submission.json`, 240 tasks, schema-valid).
 
