@@ -106,9 +106,9 @@ deletes the correct answer whenever the rule is wrong: identity is 117/117 and 7
 across the public splits, a uniform integer scale rule is 56/56, and rejecting
 single-colour candidates when no demonstration output is itself uniform is 1219/1219.
 Transpose (95.1%/97.8%), constant-output-shape (66.1%/95.3%) and colour closure
-(100%/99.87%) look usable and are all excluded — the first two always fail on a task whose
-answer is input-shaped, and colour closure fails once in 750. Each rule is skipped if it
-would empty the pool; we verified soundness, not score effect.
+(100%/99.87%) all look usable and are all excluded — the first two fail only where the
+answer is input-shaped, and colour closure fails once in 750. Each is skipped if it would
+empty the pool; soundness verified, score effect not.
 
 ### 2.5 Cascade scheduling over a fixed 12-hour session
 
@@ -155,7 +155,7 @@ so a non-degenerate candidate exists for the prior to promote.
 
 For scale, the 2025-winning lineage scored 33.89 on 4 x L4 with ~4x our compute plus an
 SFT stage we did not reproduce; and at ~180 s per task, 240 tasks already need ~12 h, so
-the reference's 16 inference augmentations do not fit in one session here.
+16 inference augmentations do not fit in one session here.
 
 Smoke run, five easiest training tasks: **4/5** — not an accuracy estimate.
 
@@ -174,5 +174,5 @@ the binding constraint turned out to be generation degeneracy, which the coverag
 itself encourages and which more compute cannot fix.
 
 We claim a reproducible, licence-clean pipeline whose failure modes are measured rather
-than assumed, four specific defects found by measurement and fixed, and an honest floor
-for this class of solver at this compute budget — not competitiveness.
+than assumed, four defects found by measurement and fixed, and an honest floor for this
+solver class at this budget — not competitiveness.
