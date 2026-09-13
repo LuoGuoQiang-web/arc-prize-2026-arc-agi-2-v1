@@ -1,10 +1,10 @@
 # When Cheap Transformations Vanish: A Diagnostic Study of Shallow Symbolic Solvers on ARC-AGI-2
 
-> **提交前必须替换的 3 处占位符（否则 Writeup 不完整）**
-> 1. `[repository URL]` → 你的公开 GitHub 仓库地址
-> 2. `[Kaggle notebook URL]` → 公开 notebook 地址（Project Links 字段）
-> 3. `[submission ID]` → ARC-AGI-2 代码提交的 submission ID
-> 另需在 Media Gallery 上传两张图：`cover.png`（封面，必需）与 `coverage_curve.png`。
+> **本 Writeup 已就绪，无需替换任何占位符。** 直接粘贴即可。
+> 公开 notebook：https://www.kaggle.com/code/luoguoqiang/arc-prize-2026-arc-agi-2-v1-diagnostic-engine
+> 代码提交 ID：56199696（`submission.json`，240 题，schema 校验通过）
+> 开源仓库（MIT-0）：https://github.com/LuoGuoQiang-web/arc-prize-2026-arc-agi-2-v1
+> Media Gallery 请上传两张图：`cover.png`（封面，必需）与 `coverage_curve.png`。
 
 **Subtitle**
 
@@ -111,7 +111,7 @@ We report no improvement on the public evaluation split: **0.000% (0/167)** for 
 
 Runs on CPU in seconds. The submission comes from a Kaggle notebook whose embedded engine is byte-checked against the repository source at build time; 36 self-tests and a full dry-run pass; one script re-verifies every headline number. The released notebook integrates both alternative classes, each switchable for ablation (`enable_object_family`, `enable_context_family`). Data: official ARC-AGI-2 release (Apache-2.0); code MIT-0; no weights, no external data, no network.
 
-**Links.** Code: `[repository URL]`. Notebook: `[Kaggle notebook URL]`. This writeup is linked to Kaggle code submission `[submission ID]`.
+**Links.** Code (MIT-0): `github.com/LuoGuoQiang-web/arc-prize-2026-arc-agi-2-v1`. Notebook: `luoguoqiang/arc-prize-2026-arc-agi-2-v1-diagnostic-engine` on Kaggle. Linked code submission: **56199696** (`submission.json`, 240 tasks, schema-valid).
 
 **Figure 1** (cover) shows the four headline measurements; **Figure 2** details the coverage curve.
 
@@ -121,12 +121,12 @@ Runs on CPU in seconds. The submission comes from a Kaggle notebook whose embedd
 
 ## Appendix: Links
 
-- Code (MIT-0): `[repository URL]`
-- Kaggle notebook (public): `[Kaggle notebook URL]`
-- Linked Kaggle code submission: `[submission ID]`
+- Code (MIT-0): `https://github.com/LuoGuoQiang-web/arc-prize-2026-arc-agi-2-v1`
+- Kaggle notebook (public): https://www.kaggle.com/code/luoguoqiang/arc-prize-2026-arc-agi-2-v1-diagnostic-engine
+- Linked Kaggle code submission: 56199696 (`submission.json`, 240 tasks, schema-valid)
 - Figures: `cover.png` (Figure 1, cover image — required), `coverage_curve.png` (Figure 2)
 - Data: official ARC-AGI-2 release, Apache-2.0.
-- Reproduction: `python work/arc_w1/reproduce_all.py` re-verifies every number above (15/15 checks).
+- Reproduction: `python work/arc_w1/reproduce_all.py` re-verifies every number above (18/18 checks).
 
 ## Appendix: Author background
 
