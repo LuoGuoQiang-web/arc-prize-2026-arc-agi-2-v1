@@ -1729,6 +1729,26 @@ class Run:
 # 8. Main entry point
 # --------------------------------------------------------------------------------------
 
+def resolve_submission_path(cfg: dict, mode: str, run_dir: Path) -> Path:
+    """Decide where this run writes its submission file.
+
+    ONLY a submit-mode run may write the competition file. A dev/self-scoring run writes
+    to its own path.
+
+    Why this exists: on 2026-09-13 the notebook ran submit mode (240 tasks) and then dev
+    mode (120 eval tasks); dev mode wrote to the same ``/kaggle/working/submission.json``
+    and silently overwrote the real submission, so Kaggle scored a 120-task file and
+    rejected it with "incorrect format: wrong number of rows". The bug is fixed here and
+    guarded by a regression test in tests/run_notebook_dryrun.py.
+    """
+    if cfg["submission_path"]:
+        return Path(cfg["submission_path"])
+    if mode == "submit":
+        return (Path("/kaggle/working/submission.json")
+                if Path("/kaggle/working").is_dir() else run_dir / "submission.json")
+    return Path(cfg["project_dir"]) / "dev_submission.json"
+
+
 def decide_mode(cfg, discovery) -> str:
     if cfg["mode"] != "auto":
         return cfg["mode"]
@@ -1770,9 +1790,7 @@ def main(**overrides) -> dict:
 
     run = Run(cfg)
     log = run.log
-    submission_path = Path(cfg["submission_path"] or
-                           ("/kaggle/working/submission.json" if Path("/kaggle/working").is_dir()
-                            else run.dir / "submission.json"))
+    submission_path = resolve_submission_path(cfg, mode, run.dir)
     log(f"engine v{ENGINE_VERSION} | mode={mode} dataset={dataset} | {len(tasks)} tasks")
     log(f"data source: {source or '(none)'}")
 
@@ -1955,9 +1973,7 @@ def rebuild_submission(run_id: str | None = None, **overrides) -> dict:
     dataset = decide_dataset(cfg, decide_mode(cfg, discovery), discovery)
     tasks, solutions, _ = load_dataset(cfg, discovery, dataset)
     results = {tid: rec["attempts"] for tid, rec in done.items() if tid in tasks}
-    submission_path = Path(cfg["submission_path"] or
-                           ("/kaggle/working/submission.json" if Path("/kaggle/working").is_dir()
-                            else run.dir / "submission.json"))
+    submission_path = resolve_submission_path(cfg, decide_mode(cfg, discovery), run.dir)
     write_submission(submission_path, results, tasks)
     ok, problems = validate_submission(submission_path, expected_structure(tasks),
                                        discovery["files"].get("sample_submission"))

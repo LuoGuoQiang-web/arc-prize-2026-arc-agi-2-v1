@@ -258,7 +258,24 @@ python tools/build_notebook.py         # 改完引擎后重新生成 .ipynb
 
 → **四个结构互不相关的搜索空间在评测集上全部恰好 0/120**：失败是**表示能力正交**，不是搜索空间不够大（这是论文的普适性证据）。
 
-### 12.5 复现命令
+### 12.5 线上事故与修复（2026-09-13）
+
+**现象**：第一次真实提交被 Kaggle 拒绝——`status=COMPLETE` 但附带 `errorDescription="Your notebook generated a submission file with incorrect format... wrong number of rows..."`，且不出现在公开榜上。
+
+**根因**：notebook 第 4 格跑 `mode="submit"` 写出 240 题的 `/kaggle/working/submission.json`；第 7 格（可选自评）跑 `mode="dev"`，而**旧版引擎让 dev 也写同一个路径**，把 240 题的正式提交覆盖成 120 题的评测集提交 → Kaggle 读到 120 题的文件，判定格式错误。（已用 `kaggle kernels output` 下载实收文件核实：只有 120 题。）
+
+**为什么本地干跑没抓到**：本机不存在 `/kaggle/working`，旧默认逻辑在那种情况下让 dev 写进自己的 run 目录，覆盖分支从未被触发；只有在 Kaggle（该目录存在）才会发生。
+
+**修复**：
+1. 引擎新增 `resolve_submission_path()`——**只有 submit 模式能写竞赛文件**，dev 一律写 `<project_dir>/dev_submission.json`；
+2. `tests/selftest.py` 增加 3 项环境无关的回归检查（submit/dev 路径必须不同、dev 永不指向 `submission.json`、显式 `submission_path` 仍优先）→ 自测 **36 → 39 项**；
+3. 新增 `tests/simulate_kaggle_env.py`：在 Windows 上创建 `C:\kaggle\working` **模拟 Kaggle 的路径分支**，跑完整「先 submit 后 dev」序列并断言正式提交未被覆盖（6/6 通过）。
+
+**复验**：修复后重推 kernel（version 2），日志显示 `VALID: True | 题目数: 240`、`rebuild from checkpoint: 240/240 tasks | valid=True`，且 dev 写到 `arcprize/dev_submission.json`（不再触碰顶层文件）。
+
+> 教训：本地无法复现目标环境的**路径分支**时，测试必须显式构造该分支——否则"全绿"是假的。
+
+### 12.6 复现命令
 
 ```bash
 # 引擎自测与 Notebook 干跑

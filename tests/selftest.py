@@ -60,6 +60,24 @@ def main() -> int:
     print(f"fixture: {info['n_tasks']} tasks -> {info['dir']}")
 
     arc = load_engine()
+
+    # --- REGRESSION (2026-09-13): dev must never write the competition submission path.
+    # On Kaggle the notebook ran submit mode (240 tasks) and then dev mode (120 eval tasks);
+    # dev mode wrote to the same /kaggle/working/submission.json and clobbered the real
+    # submission, which Kaggle then rejected with "incorrect format: wrong number of rows".
+    # Local dry-runs missed it because /kaggle/working does not exist here.
+    cfg_p = arc.make_config({"project_dir": str(runtime)})
+    run_dir = runtime / "runs" / "probe"
+    p_submit = arc.resolve_submission_path(cfg_p, "submit", run_dir)
+    p_dev = arc.resolve_submission_path(cfg_p, "dev", run_dir)
+    check("regression: dev and submit resolve to different submission paths",
+          p_submit != p_dev, f"{p_submit} vs {p_dev}")
+    check("regression: dev run never targets the competition submission.json",
+          not (p_dev.name == "submission.json" and "dev" not in str(p_dev)),
+          str(p_dev))
+    cfg_explicit = arc.make_config({"project_dir": str(runtime), "submission_path": str(runtime / "explicit.json")})
+    check("explicit submission_path still wins",
+          arc.resolve_submission_path(cfg_explicit, "dev", run_dir) == runtime / "explicit.json")
     base_cfg = dict(
         input_roots=[str(tmp / "input")],
         project_dir=str(runtime),
