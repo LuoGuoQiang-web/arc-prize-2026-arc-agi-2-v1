@@ -1637,6 +1637,84 @@ def shape_preserving_task(task: dict) -> bool:
     return True
 
 
+def _uniform_scale_rule(inp_shape: Tuple[int, int], demos: Sequence[dict]
+                        ) -> Optional[Tuple[int, int]]:
+    """Output shape when every demonstration scales by the SAME integer factor.
+
+    Handles both directions (``k > 1`` upscales, ``1/k`` downscales) and returns ``None``
+    unless the demonstrations agree on one factor, or the factor is 1 (that is the
+    identity rule, handled separately).
+
+    MEASURED soundness (``measure_shape_rules.py``): 100.00% -- 41/41 upscale and 15/15
+    downscale over the training split, zero counterexamples.
+    """
+    factors = set()
+    for demo in demos:
+        i = validate_grid(demo.get("input"))
+        o = validate_grid(demo.get("output"))
+        if i is None or o is None:
+            return None
+        ih, iw = i.shape
+        oh, ow = o.shape
+        if oh % ih == 0 and ow % iw == 0:
+            kr, kc = oh // ih, ow // iw
+            if kr != kc:
+                return None
+            factors.add(("up", kr))
+        elif ih % oh == 0 and iw % ow == 0:
+            kr, kc = ih // oh, iw // ow
+            if kr != kc:
+                return None
+            factors.add(("down", kr))
+        else:
+            return None
+    if len(factors) != 1:
+        return None
+    direction, k = factors.pop()
+    if k < 2:
+        return None
+    h, w = inp_shape
+    if direction == "up":
+        return (h * k, w * k)
+    if h % k or w % k:
+        return None
+    return (h // k, w // k)
+
+
+def predicted_output_shape(task: dict, test_input: Any) -> Optional[Tuple[int, int]]:
+    """The output shape every MEASURED-SOUND rule agrees on, else ``None``.
+
+    Only rules with a perfect record may filter candidates, because filtering deletes the
+    correct answer whenever the rule is wrong. Per-rule soundness measured on both public
+    splits::
+
+        identity       117/117 = 100.00% eval,  719/719 = 100.00% train  -> used
+        uniform_scale  n/a eval,                 56/56   = 100.00% train  -> used
+        transpose       58/61  =  95.08% eval,  397/406  =  97.78% train  -> EXCLUDED
+        constant        37/56  =  66.07% eval,  446/468  =  95.30% train  -> EXCLUDED
+
+    Every ``transpose`` and ``constant`` counterexample is a task whose real answer is
+    input-shaped, so those two rules would remove the correct candidate exactly where the
+    identity rule is right. Returns ``None`` when the sound rules disagree, leaving the
+    pool unfiltered.
+    """
+    arr = validate_grid(test_input)
+    if arr is None:
+        return None
+    demos = task.get("train", [])
+    if not demos:
+        return None
+    predicted = set()
+    if shape_preserving_task(task):
+        predicted.add(arr.shape)
+    scaled = _uniform_scale_rule(arr.shape, demos)
+    if scaled is not None:
+        predicted.add(scaled)
+    if len(predicted) == 1:
+        return predicted.pop()
+    return None
+
+
 def apply_shape_prior(task: dict, test_input: Any, pool: Sequence[Candidate]
                       ) -> Tuple[List[Candidate], int]:
     """Drop candidates whose shape cannot be right, when the demonstrations prove it.
@@ -1649,12 +1727,12 @@ def apply_shape_prior(task: dict, test_input: Any, pool: Sequence[Candidate]
     at the margin: a task with no candidate can only fall back to a layer that is
     measured at exactly zero, so an empty pool is strictly worse than a bad shape.
     """
-    if not pool or not shape_preserving_task(task):
+    if not pool:
         return list(pool), 0
-    arr = validate_grid(test_input)
-    if arr is None:
+    want = predicted_output_shape(task, test_input)
+    if want is None:
         return list(pool), 0
-    keep = [c for c in pool if c.grid.shape == arr.shape]
+    keep = [c for c in pool if c.grid.shape == want]
     if not keep:
         return list(pool), 0
     return keep, len(pool) - len(keep)

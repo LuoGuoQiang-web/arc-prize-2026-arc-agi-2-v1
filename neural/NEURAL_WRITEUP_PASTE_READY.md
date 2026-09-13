@@ -53,13 +53,12 @@
 We began from a symbolic solver — program search over a fixed vocabulary of grid
 transformations — and measured it honestly before building anything on top of it.
 
-**(a) The symbolic floor is zero, not small.** On the full 120-task ARC-AGI-2 public
-evaluation split the engine solved **0/120 (0.000%)**. Not "few": zero validated
-programs; every one of the 120 tasks fell through to an unvalidated prior. The same
-engine scores 4.833% on the training split, so the collapse is a distribution shift,
-not an implementation defect. This corroborates, on the 2026 data, the community
-finding that BARC-style search-and-learn solves ~0.8% of ARC-AGI-2 private tasks
-against ~22% on ARC-AGI-1.
+(a) The symbolic floor is zero, not small. On the full 120-task ARC-AGI-2 public
+evaluation split the engine solved **0/120 (0.000%)** — not "few": zero validated
+programs; all 120 tasks fell through to an unvalidated prior. The same engine scores
+4.833% on the training split, so the collapse is a distribution shift, not an
+implementation defect. This corroborates the community finding that BARC-style
+search-and-learn solves ~0.8% of ARC-AGI-2 private tasks against ~22% on ARC-AGI-1.
 
 **(b) The cheap fallback is also zero.** Only a task the neural path fails to answer
 ever reaches the fallback layer, so its quality matters at scale. We measured two
@@ -76,8 +75,8 @@ produces a correct answer: constant fills, the identity and the fg/bg swap are n
 answer here.
 
 **Consequence.** Every point must come from the model. "Never leave an attempt blank" is
-a *format-validity* property (a malformed submission is rejected outright), not a
-scoring strategy, so coverage of genuine neural candidates is the only lever.
+a *format-validity* property, not a scoring strategy; coverage of genuine neural
+candidates is the only lever.
 
 ---
 
@@ -110,8 +109,8 @@ kaiming-initialised and `B` zero, so the adapter starts as an exact no-op and th
 behaviour is preserved until training moves it. `scale` follows rsLoRA
 (`alpha/√r = 32/4 = 8`).
 
-This is ~40 lines and no dependency, which also makes the whole submission
-licence-clean: an Apache-2.0 checkpoint plus code we wrote ourselves.
+It is ~40 dependency-free lines, which also keeps the submission licence-clean: an
+Apache-2.0 checkpoint plus our own code.
 
 Two correctness properties are covered by local tests: on the first step `∂L/∂A` is
 *exactly* zero because `B = 0`, becoming non-zero on the second; and the adapters must be
@@ -143,6 +142,14 @@ Flushing the live beams and recovering at the first incomplete row turned three 
 pools into pools of 2, 1 and 8 and took a five-task smoke run from **2/5 to 4/5
 correct**, with no change to the model or the training loop.
 
+Selection uses a demonstration-shape prior — the cheapest precision lever, since it costs
+no extra generation. Only rules with a *perfect* record may filter, because filtering
+deletes the correct answer whenever the rule is wrong: identity is 117/117 and 719/719
+across the public splits, and a uniform integer scale rule is 56/56, so other shapes are
+dropped. Transpose (95.1%/97.8%) and constant-output-shape (66.1%/95.3%) look usable and
+are deliberately excluded — every counterexample for both has an input-shaped answer. The
+filter is skipped if it would empty the pool; we verified soundness, not score effect.
+
 ### 2.5 Cascade scheduling over a fixed 12-hour session
 
 A Kaggle GPU session is capped at 12 hours, the weekly budget at 30 hours and
@@ -159,25 +166,22 @@ if it is killed at the wall clock.
 ## 3. Results
 
 **Held-out accuracy: 4.17% (1/24)** on a uniformly spaced 24-task sample of the
-ARC-AGI-2 public evaluation split, in a single 8-hour-class T4 x 2 session
-(4844 s of solving after a 140 s model load, 202 s per task, peak 14.09 GiB).
+ARC-AGI-2 public evaluation split, in a single T4 x 2 session (4844 s of solving after a
+140 s model load, 202 s per task, peak 14.09 GiB).
 
-**This number contains no test-time training.** The run's own log ends with
-`[stage B] stopping: reserve reached (remaining=556s)`: the no-TTT sweep sized each
-task's slice as a share of the *whole* remaining budget, so it necessarily consumed all
-of it and Stage B was never entered. We report that rather than describe the pipeline as
-if TTT had contributed — a scheduled stage that never executes is a defect, not a
-detail. It is fixed by capping the sweep at 45% of the usable budget.
+**This number contains no test-time training.** The run's log ends with `[stage B]
+stopping: reserve reached`: the no-TTT sweep sized each slice as a share of the *whole*
+remaining budget, so it necessarily consumed it and Stage B was never entered. A
+scheduled stage that never executes is a defect, not a detail; it is fixed by capping the
+sweep at 45% of the budget.
 
 Two further measured defects came out of the same log and are fixed:
 
-- **Rescoring OOM.** Three tasks hit `rescoring batch failed: CUDA out of memory. Tried
-  to allocate 3.75 GiB` on a 14.6 GiB card. The whole micro-batch was abandoned, so every
-  candidate in it stayed unscored and ranked last. The scorer now halves the batch and
-  retries down to a single candidate.
-- **Sweep slice units.** Slices were applied per *test input*, so two-input tasks ran
-  ~270 s against a slice the scheduler believed was 150 s — which is what let the sweep
-  eat the session.
+- **Rescoring OOM.** Three tasks hit `CUDA out of memory. Tried to allocate 3.75 GiB` on
+  a 14.6 GiB card; the whole micro-batch was abandoned, leaving those candidates
+  unscored and ranked last. The scorer now halves the batch down to one candidate.
+- **Sweep slice units.** Slices applied per *test input* meant two-input tasks ran
+  ~270 s against a slice the scheduler read as 150 s, which let the sweep eat the session.
 
 The more informative result sits next to the accuracy: **24 of 24 tasks received a
 genuine neural candidate**. Coverage is complete; the failure is in *precision*, not in
@@ -185,24 +189,20 @@ reach. That is exactly what the symbolic and fallback measurements predicted —
 both of those layers are worth exactly zero, a task with a real candidate is the only
 kind of task that can ever score, and here every task is that kind.
 
-For scale: the same benchmark was scored at 33.89 by the 2025-winning lineage, which
-used 4 x L4 and roughly four times our compute per task, plus a synthetic-data SFT
-stage we did not reproduce (we use the published Apache-2.0 checkpoint instead). This
-hardware also bounds the obvious fix: at ~180 s per task with one inference
-augmentation, 240 tasks already need ~12 h, so the reference's 16 inference
-augmentations — augmentation voting — do not fit in a single session here.
+For scale, the 2025-winning lineage scored 33.89 using 4 x L4 and roughly four times our
+compute per task, plus a synthetic-data SFT stage we did not reproduce. This hardware
+also bounds the obvious fix: at ~180 s per task, 240 tasks already need ~12 h, so the
+reference's 16 inference augmentations do not fit in one session here.
 
-Smoke run, five training tasks: **4/5 correct**, ~216 s per task — the easiest tasks in
-key order, so not an accuracy estimate.
+Smoke run, five easiest training tasks: **4/5** — not an accuracy estimate.
 
 ---
 
 ## 4. What this says
 
-The symbolic route is closed on ARC-AGI-2 — exactly zero on 120 public evaluation
-tasks — and the fallback layer is exactly zero too, so no edge calibration moves the
-score. The only lever is whether a genuine neural candidate exists, and on the
-evaluation sample it did, for every task.
+The symbolic route is closed on ARC-AGI-2 — exactly zero on 120 evaluation tasks — and
+the fallback layer is exactly zero too, so no edge calibration moves the score. The only
+lever is whether a genuine neural candidate exists, and on the evaluation sample it did.
 
 Coverage engineering (timeout flushing, truncation recovery, a budget-capped cascade,
 never emitting a malformed file) took smoke tasks from 2/5 to 4/5 and reached 24/24
