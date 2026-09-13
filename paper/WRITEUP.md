@@ -105,11 +105,11 @@ The hypothesis is falsifiable, and three predictions hold. (P1) Extending the vo
 
 ## 6. Limitations and negative result
 
-We report no improvement on the public evaluation split: **0.000% (0/167)** for A, B, C, their combinations, and every trivial baseline—eval coverage stays **0/120**, so portfolio gains cannot transfer. This is a capability boundary, not a tuning failure: the families our vocabularies cover cheaply are absent from eval by construction. We used the eval split once, as its guidance requires; our claims concern *mechanism*, not accuracy.
+We report no improvement on the public evaluation split: **0.000% (0/167)** for A, B, C, their combinations, and every trivial baseline—eval coverage stays **0/120**, so portfolio gains cannot transfer. This is a capability boundary, not a tuning failure: the families our vocabularies cover cheaply are absent from eval by construction. We used the eval split once; our claims concern *mechanism*, not accuracy.
 
 ## 7. Reproducibility
 
-Runs on CPU in seconds. The submission comes from a Kaggle notebook whose embedded engine is byte-checked against the repository source at build time; 36 self-tests and a full dry-run pass; one script re-verifies every headline number. The released notebook integrates both alternative classes, each switchable for ablation (`enable_object_family`, `enable_context_family`). Data: official ARC-AGI-2 release (Apache-2.0); code MIT-0; no weights, no external data, no network.
+Runs on CPU in seconds. The submission comes from a Kaggle notebook whose embedded engine is byte-checked against the repository source at build time; 39 self-tests, a full dry-run, and an environment-faithful simulation of the submission path (which catches Kaggle-only branches) all pass; one script re-verifies every headline number. The notebook integrates both alternative classes, each switchable for ablation. Data: official ARC-AGI-2 release (Apache-2.0); code MIT-0; no weights, no data, no network.
 
 **Links.** Code (MIT-0): `github.com/LuoGuoQiang-web/arc-prize-2026-arc-agi-2-v1`. Notebook: `luoguoqiang/arc-prize-2026-arc-agi-2-v1-diagnostic-engine` on Kaggle. Linked code submission: **56199696** (`submission.json`, 240 tasks, schema-valid).
 
