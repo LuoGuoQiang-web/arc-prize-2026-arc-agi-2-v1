@@ -1617,6 +1617,49 @@ def pool_stats(pools: Sequence[Sequence[Candidate]]) -> Tuple[int, int, float, f
     return n_total, len(counts), best_key, agree
 
 
+def shape_preserving_task(task: dict) -> bool:
+    """True when every demonstration maps an input to an output of the same shape.
+
+    MEASURED on the public splits (``solver/measure_shape_prior.py``): this holds for
+    67.5% of evaluation tasks (81/120) and 68.0% of training tasks (680/1000). Crucially,
+    on those tasks the test output really was input-shaped for **117/117** and
+    **719/719** test inputs -- zero counterexamples across 836 inputs. So on those tasks a
+    candidate whose shape differs from the test input is certainly wrong.
+    """
+    demos = task.get("train", [])
+    if not demos:
+        return False
+    for demo in demos:
+        a = validate_grid(demo.get("input"))
+        b = validate_grid(demo.get("output"))
+        if a is None or b is None or a.shape != b.shape:
+            return False
+    return True
+
+
+def apply_shape_prior(task: dict, test_input: Any, pool: Sequence[Candidate]
+                      ) -> Tuple[List[Candidate], int]:
+    """Drop candidates whose shape cannot be right, when the demonstrations prove it.
+
+    This is the cheapest precision lever available: it costs no extra generation, unlike
+    inference-augmentation voting, which does not fit in a 12 h session at this hardware
+    (240 tasks x ~180 s already needs ~12 h). Returns ``(pool, n_dropped)``.
+
+    The filter is skipped whenever it would empty the pool. Coverage outranks precision
+    at the margin: a task with no candidate can only fall back to a layer that is
+    measured at exactly zero, so an empty pool is strictly worse than a bad shape.
+    """
+    if not pool or not shape_preserving_task(task):
+        return list(pool), 0
+    arr = validate_grid(test_input)
+    if arr is None:
+        return list(pool), 0
+    keep = [c for c in pool if c.grid.shape == arr.shape]
+    if not keep:
+        return list(pool), 0
+    return keep, len(pool) - len(keep)
+
+
 def select_attempts(pool: Sequence[Candidate], fallback: Tuple[np.ndarray, np.ndarray]
                     ) -> Tuple[np.ndarray, np.ndarray, str, str]:
     """Best two *distinct* grids from the unified pool (rank ascending).
@@ -1768,6 +1811,7 @@ def solve_task(task: dict, task_id: str, model: Any, tokenizer: Any,
                rng: random.Random, do_ttt: bool = True, use_engine: bool = True,
                aug_override: Optional[int] = None, pool_prev: Optional[Sequence[Sequence[Candidate]]] = None,
                scheduler: Optional[BudgetScheduler] = None,
+               use_shape_prior: bool = True,
                log_fn: Callable[[str], None] = print) -> TaskResult:
     """Full pipeline for one task: [TTT] -> DFS(+augs) -> pool -> rescore -> 2 attempts.
 
@@ -1933,6 +1977,12 @@ def solve_task(task: dict, task_id: str, model: Any, tokenizer: Any,
     result.sources = []
     for i in range(n_test):
         pool = dedupe_pool(pools[i])
+        if use_shape_prior:
+            pool, n_dropped = apply_shape_prior(task, tests[i]["input"], pool)
+            if n_dropped:
+                log_fn(f"  [{task_id}] shape prior dropped {n_dropped} candidate(s) "
+                       f"for test {i} (demonstrations are shape-preserving, so a "
+                       f"different shape cannot be right)")
         pools[i] = pool
         a1, a2, s1, s2 = select_attempts(pool, fallbacks[i])
         v1 = validate_grid(a1)
@@ -2037,6 +2087,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--stage-a-share", type=float, default=STAGE_A_BUDGET_SHARE,
                         help="fraction of the usable budget the no-TTT sweep may spend; "
                              "the rest is reserved for Stage B (TTT) refinement")
+    parser.add_argument("--shape-prior", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="when every demonstration preserves shape (measured: 67.5%% "
+                             "of evaluation tasks, and the test output was then "
+                             "input-shaped 117/117 times), drop candidates whose shape "
+                             "differs from the test input; skipped if it would empty "
+                             "the pool")
     parser.add_argument("--num-shards", type=int, default=1,
                         help="split the task list into this many interleaved shards "
                              "(2 concurrent 12 h GPU sessions is Kaggle's ceiling)")
@@ -2204,6 +2261,7 @@ def run_uniform(ctx: RunContext) -> None:
         try:
             res = solve_task(ctx.tasks[tid], tid, ctx.model, ctx.tokenizer, ctx.engine,
                              args, slice_seconds, ctx.rng, do_ttt=True, use_engine=True,
+                             use_shape_prior=args.shape_prior,
                              scheduler=scheduler, log_fn=ctx.log)
         except Exception as exc:
             res = _task_error_result(ctx, tid, exc)
@@ -2276,6 +2334,7 @@ def run_cascade(ctx: RunContext) -> None:
         try:
             res = solve_task(ctx.tasks[tid], tid, ctx.model, ctx.tokenizer, ctx.engine,
                              args, slice_a, ctx.rng, do_ttt=False, use_engine=False,
+                             use_shape_prior=args.shape_prior,
                              aug_override=aug_a, scheduler=scheduler, log_fn=ctx.log)
         except Exception as exc:
             res = _task_error_result(ctx, tid, exc)
@@ -2323,6 +2382,7 @@ def run_cascade(ctx: RunContext) -> None:
         try:
             res = solve_task(ctx.tasks[tid], tid, ctx.model, ctx.tokenizer, ctx.engine,
                              args, slice_b, ctx.rng, do_ttt=True, use_engine=False,
+                             use_shape_prior=args.shape_prior,
                              pool_prev=prev_pools, scheduler=scheduler, log_fn=ctx.log)
         except Exception as exc:
             ctx.log(f"  ! stage B task {tid} failed: {type(exc).__name__}: {exc}")

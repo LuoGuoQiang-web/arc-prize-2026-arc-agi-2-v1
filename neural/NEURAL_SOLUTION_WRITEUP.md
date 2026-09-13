@@ -39,8 +39,8 @@ produces a correct answer: constant fills, the identity and the fg/bg swap are n
 answer here.
 
 **Consequence.** Every point must come from the model. "Never leave an attempt blank" is
-a *format-validity* property (a malformed submission is rejected outright), not a
-scoring strategy, so coverage of genuine neural candidates is the only lever.
+a *format-validity* property, not a scoring strategy; coverage of genuine neural
+candidates is the only lever.
 
 ---
 
@@ -73,8 +73,8 @@ kaiming-initialised and `B` zero, so the adapter starts as an exact no-op and th
 behaviour is preserved until training moves it. `scale` follows rsLoRA
 (`alpha/√r = 32/4 = 8`).
 
-This is ~40 lines and no dependency, which also makes the whole submission
-licence-clean: an Apache-2.0 checkpoint plus code we wrote ourselves.
+It is ~40 dependency-free lines, which also keeps the submission licence-clean: an
+Apache-2.0 checkpoint plus our own code.
 
 Two correctness properties are covered by local tests: on the first step `∂L/∂A` is
 *exactly* zero because `B = 0`, becoming non-zero on the second; and the adapters must be
@@ -106,6 +106,12 @@ Flushing the live beams and recovering at the first incomplete row turned three 
 pools into pools of 2, 1 and 8 and took a five-task smoke run from **2/5 to 4/5
 correct**, with no change to the model or the training loop.
 
+Selection also uses a demonstration-shape prior — the cheapest precision lever, since it
+costs no extra generation. When every demonstration preserves shape (67.5% of evaluation
+tasks) the test output was input-shaped 117/117 times, zero counterexamples across 836
+inputs on both public splits, so other shapes are dropped; the filter is skipped if it
+would empty the pool. We verified the prior is *sound*, not its effect on score.
+
 ### 2.5 Cascade scheduling over a fixed 12-hour session
 
 A Kaggle GPU session is capped at 12 hours, the weekly budget at 30 hours and
@@ -122,8 +128,8 @@ if it is killed at the wall clock.
 ## 3. Results
 
 **Held-out accuracy: 4.17% (1/24)** on a uniformly spaced 24-task sample of the
-ARC-AGI-2 public evaluation split, in a single 8-hour-class T4 x 2 session
-(4844 s of solving after a 140 s model load, 202 s per task, peak 14.09 GiB).
+ARC-AGI-2 public evaluation split, in a single T4 x 2 session (4844 s of solving after a
+140 s model load, 202 s per task, peak 14.09 GiB).
 
 **This number contains no test-time training.** The run's own log ends with
 `[stage B] stopping: reserve reached (remaining=556s)`: the no-TTT sweep sized each
@@ -134,13 +140,11 @@ detail. It is fixed by capping the sweep at 45% of the usable budget.
 
 Two further measured defects came out of the same log and are fixed:
 
-- **Rescoring OOM.** Three tasks hit `rescoring batch failed: CUDA out of memory. Tried
-  to allocate 3.75 GiB` on a 14.6 GiB card. The whole micro-batch was abandoned, so every
-  candidate in it stayed unscored and ranked last. The scorer now halves the batch and
-  retries down to a single candidate.
-- **Sweep slice units.** Slices were applied per *test input*, so two-input tasks ran
-  ~270 s against a slice the scheduler believed was 150 s — which is what let the sweep
-  eat the session.
+- **Rescoring OOM.** Three tasks hit `CUDA out of memory. Tried to allocate 3.75 GiB` on
+  a 14.6 GiB card; the whole micro-batch was abandoned, leaving those candidates
+  unscored and ranked last. The scorer now halves the batch down to one candidate.
+- **Sweep slice units.** Slices applied per *test input* meant two-input tasks ran
+  ~270 s against a slice the scheduler read as 150 s, which let the sweep eat the session.
 
 The more informative result sits next to the accuracy: **24 of 24 tasks received a
 genuine neural candidate**. Coverage is complete; the failure is in *precision*, not in
@@ -148,15 +152,12 @@ reach. That is exactly what the symbolic and fallback measurements predicted —
 both of those layers are worth exactly zero, a task with a real candidate is the only
 kind of task that can ever score, and here every task is that kind.
 
-For scale: the same benchmark was scored at 33.89 by the 2025-winning lineage, which
-used 4 x L4 and roughly four times our compute per task, plus a synthetic-data SFT
-stage we did not reproduce (we use the published Apache-2.0 checkpoint instead). This
-hardware also bounds the obvious fix: at ~180 s per task with one inference
-augmentation, 240 tasks already need ~12 h, so the reference's 16 inference
-augmentations — augmentation voting — do not fit in a single session here.
+For scale, the 2025-winning lineage scored 33.89 using 4 x L4 and roughly four times our
+compute per task, plus a synthetic-data SFT stage we did not reproduce. This hardware
+also bounds the obvious fix: at ~180 s per task, 240 tasks already need ~12 h, so the
+reference's 16 inference augmentations do not fit in one session here.
 
-Smoke run, five training tasks: **4/5 correct**, ~216 s per task — the easiest tasks in
-key order, so not an accuracy estimate.
+Smoke run, five easiest training tasks: **4/5 correct** — not an accuracy estimate.
 
 ---
 
