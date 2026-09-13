@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.selftest_tmp/
+.dryrun/
+arcprize_runtime/
+*_runtime/
+fixture_data/
+
+# local scratch / outputs
+*.log
+runs/
+backups/
+checkpoint.jsonl
+submission.json
