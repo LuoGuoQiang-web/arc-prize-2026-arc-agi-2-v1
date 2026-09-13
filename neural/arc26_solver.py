@@ -1715,27 +1715,72 @@ def predicted_output_shape(task: dict, test_input: Any) -> Optional[Tuple[int, i
     return None
 
 
+def demonstrations_never_uniform(task: dict) -> bool:
+    """True when no demonstration output is a single colour.
+
+    MEASURED (``measure_uniform_rule.py``): on every input where this holds -- 172/172 on
+    the evaluation split and 1047 on training -- the true test output was **never**
+    uniform. Zero counterexamples across 1219 inputs, so a uniform candidate is certainly
+    wrong there.
+
+    This targets the real bottleneck. Reading the evaluation artifact back
+    (``crossref_attempts.py``) showed that **10 of 32 attempt_1 grids (31%) are
+    single-colour grids produced by the MODEL** (recorded source ``neural``), with only
+    one coming from the fallback layer. The mechanism is the coverage guard that keeps the
+    arg-max token when no child clears the p>0.2 threshold: in an uncertain state that
+    arg-max is often one repeated token, i.e. a degenerate grid, which then ranks first.
+    Coverage and selection were never the problem here -- generation degeneracy was.
+    """
+    demos = task.get("train", [])
+    if not demos:
+        return False
+    for demo in demos:
+        arr = validate_grid(demo.get("output"))
+        if arr is None:
+            return False
+        if len(set(arr.ravel().tolist())) == 1:
+            return False
+    return True
+
+
 def apply_shape_prior(task: dict, test_input: Any, pool: Sequence[Candidate]
                       ) -> Tuple[List[Candidate], int]:
-    """Drop candidates whose shape cannot be right, when the demonstrations prove it.
+    """Apply the measured-sound priors, dropping only candidates that cannot be right.
 
-    This is the cheapest precision lever available: it costs no extra generation, unlike
-    inference-augmentation voting, which does not fit in a 12 h session at this hardware
-    (240 tasks x ~180 s already needs ~12 h). Returns ``(pool, n_dropped)``.
+    Two rules, both with a perfect record on both public splits:
 
-    The filter is skipped whenever it would empty the pool. Coverage outranks precision
-    at the margin: a task with no candidate can only fall back to a layer that is
-    measured at exactly zero, so an empty pool is strictly worse than a bad shape.
+    * **shape** (:func:`predicted_output_shape`) -- identity 117/117 eval and 719/719
+      train, uniform integer scale 56/56;
+    * **degeneracy** (:func:`demonstrations_never_uniform`) -- 1219/1219 inputs, i.e. the
+      true answer was never a single-colour grid when no demonstration output was.
+
+    These are the cheapest precision levers available: they cost no extra generation,
+    unlike inference-augmentation voting, which does not fit in a 12 h session at this
+    hardware (240 tasks x ~180 s already needs ~12 h).
+
+    Each rule is skipped whenever applying it would empty the pool. Coverage outranks
+    precision at the margin: a task with no candidate can only fall back to a layer that
+    is measured at exactly zero, so an empty pool is strictly worse than a bad guess.
     """
-    if not pool:
-        return list(pool), 0
+    kept = list(pool)
+    dropped = 0
+    if not kept:
+        return kept, dropped
+
     want = predicted_output_shape(task, test_input)
-    if want is None:
-        return list(pool), 0
-    keep = [c for c in pool if c.grid.shape == want]
-    if not keep:
-        return list(pool), 0
-    return keep, len(pool) - len(keep)
+    if want is not None:
+        matching = [c for c in kept if c.grid.shape == want]
+        if matching:
+            dropped += len(kept) - len(matching)
+            kept = matching
+
+    if demonstrations_never_uniform(task):
+        non_uniform = [c for c in kept if len(set(c.grid.ravel().tolist())) > 1]
+        if non_uniform:
+            dropped += len(kept) - len(non_uniform)
+            kept = non_uniform
+
+    return kept, dropped
 
 
 def select_attempts(pool: Sequence[Candidate], fallback: Tuple[np.ndarray, np.ndarray]

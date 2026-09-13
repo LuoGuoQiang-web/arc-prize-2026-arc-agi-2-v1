@@ -24,22 +24,19 @@ implementation defect. This corroborates the community finding that BARC-style
 search-and-learn solves ~0.8% of ARC-AGI-2 private tasks against ~22% on ARC-AGI-1.
 
 **(b) The cheap fallback is also zero.** Only a task the neural path fails to answer
-ever reaches the fallback layer, so its quality matters at scale. We measured two
-generations of it on the public splits:
+reaches the fallback layer, so its quality matters at scale. Two generations, both
+measured on the public splits:
 
-| fallback variant | eval hits (172 test inputs) | train hits (1076) | `attempt_1 == attempt_2` |
+| fallback variant | eval hits (172) | train hits (1076) | `attempt_1 == attempt_2` |
 |---|---|---|---|
 | mode-colour fill + all-zeros | 0 | 0 | 35% / 70% |
 | identity + fg/bg swap (final) | 0 | 0 | 0% |
 
-The second version fixes a real structural bug — the first returned the *same* grid in
-both slots on 70% of training inputs, wasting the second attempt — but neither ever
-produces a correct answer: constant fills, the identity and the fg/bg swap are never the
-answer here.
+The second fixes a structural bug — the first returned the *same* grid in both slots on
+70% of training inputs — but neither ever produces a correct answer.
 
-**Consequence.** Every point must come from the model. "Never leave an attempt blank" is
-a *format-validity* property, not a scoring strategy; coverage of genuine neural
-candidates is the only lever.
+**Consequence.** Every point must come from the model, and "never leave an attempt blank"
+is a *format-validity* property, not a scoring strategy.
 
 ---
 
@@ -97,21 +94,20 @@ token when its per-token probability exceeds 0.2 and always keeping the arg-max 
 nothing clears the bar. A teacher-forced NLL re-scores every candidate, including ones
 from other sources.
 
-Two guards exist for coverage, and both came from measurement: the first implementation
-discarded its in-flight beams on timeout, so hard tasks — the ones needing more than
-their slice to emit a 930-token grid — returned an *empty* pool; and a beam cut off
-mid-row parses as ragged, so the strict parser then threw those flushed candidates away.
-Flushing the live beams and recovering at the first incomplete row turned three empty
-pools into pools of 2, 1 and 8 and took a five-task smoke run from **2/5 to 4/5
-correct**, with no change to the model or the training loop.
+Two guards for coverage, both from measurement: the first implementation discarded its
+in-flight beams on timeout, so hard tasks returned an *empty* pool; and a beam cut off
+mid-row parses as ragged, so the strict parser threw the flushed candidates away. Flushing
+the live beams and recovering at the first incomplete row turned three empty pools into
+pools of 2, 1 and 8 and took a smoke run from **2/5 to 4/5**, with no change to the model.
 
-Selection uses a demonstration-shape prior — the cheapest precision lever, since it costs
+Selection applies measured-sound priors — the cheapest precision lever, since they cost
 no extra generation. Only rules with a *perfect* record may filter, because filtering
 deletes the correct answer whenever the rule is wrong: identity is 117/117 and 719/719
-across the public splits, and a uniform integer scale rule is 56/56, so other shapes are
-dropped. Transpose (95.1%/97.8%) and constant-output-shape (66.1%/95.3%) look usable and
-are deliberately excluded — every counterexample for both has an input-shaped answer. The
-filter is skipped if it would empty the pool; we verified soundness, not score effect.
+across the public splits, a uniform integer scale rule is 56/56, and rejecting
+single-colour candidates when no demonstration output is itself uniform is 1219/1219.
+Transpose (95.1%/97.8%) and constant-output-shape (66.1%/95.3%) look usable and are
+deliberately excluded — every counterexample for both has an input-shaped answer. Each
+rule is skipped if it would empty the pool; we verified soundness, not score effect.
 
 ### 2.5 Cascade scheduling over a fixed 12-hour session
 
@@ -146,16 +142,18 @@ Two further measured defects came out of the same log and are fixed:
 - **Sweep slice units.** Slices applied per *test input* meant two-input tasks ran
   ~270 s against a slice the scheduler read as 150 s, which let the sweep eat the session.
 
-The more informative result sits next to the accuracy: **24 of 24 tasks received a
-genuine neural candidate**. Coverage is complete; the failure is in *precision*, not in
-reach. That is exactly what the symbolic and fallback measurements predicted — since
-both of those layers are worth exactly zero, a task with a real candidate is the only
-kind of task that can ever score, and here every task is that kind.
+The more informative result came from reading the grids back rather than the score.
+Coverage is complete (**24 of 24 tasks got a real candidate**), so the gap is precision —
+but not for the reason the coverage numbers suggest: of 32 attempt_1 grids, **10 (31%) are
+single-colour grids produced by the model itself**, only one coming from the fallback. The
+mechanism is the coverage guard in §2.4 — with nothing above p>0.2 we keep the arg-max,
+which in an uncertain state is one repeated token. That guard raised coverage and lowered
+precision at once, and more time cannot fix it: the model is collapsing, not running out
+of search.
 
-For scale, the 2025-winning lineage scored 33.89 using 4 x L4 and roughly four times our
-compute per task, plus a synthetic-data SFT stage we did not reproduce. This hardware
-also bounds the obvious fix: at ~180 s per task, 240 tasks already need ~12 h, so the
-reference's 16 inference augmentations do not fit in one session here.
+For scale, the 2025-winning lineage scored 33.89 on 4 x L4 with ~4x our compute plus an
+SFT stage we did not reproduce; and at ~180 s per task, 240 tasks already need ~12 h, so
+the reference's 16 inference augmentations do not fit in one session here.
 
 Smoke run, five easiest training tasks: **4/5** — not an accuracy estimate.
 
@@ -170,8 +168,8 @@ lever is whether a genuine neural candidate exists, and on the evaluation sample
 Coverage engineering (timeout flushing, truncation recovery, a budget-capped cascade,
 never emitting a malformed file) took smoke tasks from 2/5 to 4/5 and reached 24/24
 candidate coverage without touching the model. It does not by itself produce accuracy:
-the remaining gap is precision, and closing it needs either far more compute per task or
-a better selection signal than candidate agreement.
+the binding constraint turned out to be generation degeneracy, which the coverage guard
+itself encourages and which more compute cannot fix.
 
 We claim a reproducible, licence-clean pipeline whose failure modes are measured rather
 than assumed, four specific defects found by measurement and fixed, and an honest floor

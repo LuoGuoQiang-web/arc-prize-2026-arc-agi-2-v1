@@ -120,7 +120,41 @@ check("no sound rule fits -> no prediction, pool untouched",
       m.predicted_output_shape(norule, [[1, 2, 3]]) is None and
       m.apply_shape_prior(norule, [[1, 2, 3]], pool)[1] == 0)
 
-# 6. re-verify the measured claim through the real function on real data
+# 6. the degeneracy rule: reject single-colour candidates when no demo output is uniform
+nonuni = {"train": [{"input": [[1, 2]], "output": [[3, 4]]},
+                    {"input": [[5]], "output": [[6, 7]]}],
+          "test": [{"input": [[8, 9]]}]}
+hasuni = {"train": [{"input": [[1, 2]], "output": [[3, 3]]}],      # a 1-colour demo output
+          "test": [{"input": [[8, 9]]}]}
+
+check("demonstrations_never_uniform detects the applicable case",
+      m.demonstrations_never_uniform(nonuni) is True)
+check("a uniform demonstration output makes the rule inapplicable",
+      m.demonstrations_never_uniform(hasuni) is False)
+check("no demos -> rule inapplicable",
+      m.demonstrations_never_uniform({"train": [], "test": []}) is False)
+
+mixed = [cand([[0, 0], [0, 0]]),          # uniform -> must go
+         cand([[1, 2], [3, 4]]),          # varied, right shape -> stays
+         cand([[9, 9], [8, 8]])]          # varied, right shape -> stays
+kept_d, dropped_d = m.apply_shape_prior(nonuni, [[8, 9]], mixed)
+check("uniform candidates are dropped when the rule applies",
+      dropped_d == 1 and len(kept_d) == 2, f"dropped={dropped_d}")
+check("the survivors are the non-uniform ones",
+      all(len({c for row in c.grid.tolist() for c in row}) > 1 for c in kept_d))
+
+# when a DEMONSTRATION output is uniform, uniformity is not evidence of a bad candidate
+kept_u, dropped_u = m.apply_shape_prior(hasuni, [[8, 9]], mixed)
+check("a uniform candidate is NOT dropped when a demo output is uniform",
+      dropped_u == 0 and len(kept_u) == 3, f"dropped={dropped_u}")
+
+# coverage guard: every candidate uniform -> keep them rather than submit nothing
+alluni = [cand([[0, 0], [0, 0]]), cand([[5, 5], [5, 5]])]
+kept_g, dropped_g = m.apply_shape_prior(nonuni, [[8, 9]], alluni)
+check("the degeneracy filter never empties the pool",
+      len(kept_g) == 2 and dropped_g == 0, f"kept={len(kept_g)}")
+
+# 7. re-verify the measured claim through the real function on real data
 ch_path = os.path.join(COMP, "arc-agi_evaluation_challenges.json")
 sol_path = os.path.join(COMP, "arc-agi_evaluation_solutions.json")
 if os.path.isfile(ch_path) and os.path.isfile(sol_path):
