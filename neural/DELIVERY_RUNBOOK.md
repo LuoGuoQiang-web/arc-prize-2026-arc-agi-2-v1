@@ -75,10 +75,20 @@ python work/arc_w1/writeup/update_submission_ref.py --ref <新的ref>
 两份文件开头都有元数据块：标题、副标题、赛道、必需的 Project Links、需要上传的图、
 以及提交前清单。
 
-**配图**（Paper Track 必须有封面）：
+**配图**（封面是规则硬性要求，不是装饰）：
 
-- `work/arc_w1/figures/cover.png` —— 封面（必需）
-- `work/arc_w1/figures/coverage_curve.png` —— 覆盖率曲线
+| 赛道 | 传哪些图 |
+|---|---|
+| **Paper Track** | `figures/cover.png`（封面，必需）+ `figures/coverage_curve.png`（该篇的核心证据图） |
+| **ARC-AGI-2 Solution Writeup** | `figures/cover.png`（必需）+ `figures/attempt_breakdown.png` |
+
+⚠ **不要把 `coverage_curve.png` 传给 Solution Writeup** —— 那条曲线属于 Paper Track 那篇
+诊断，神经那篇正文并不讨论它。两份粘贴版顶部的 Media Gallery 说明已分别写明。（此前
+神经粘贴版照搬了 Paper Track 的说明，是错的，已修正。）
+
+`attempt_breakdown.png` 由 `figures/make_degeneracy_figure.py` 生成；
+`figures/verify_figure.py` 会**从运行产物重新推导图上画的每一个数字**并逐一比对，
+所以这张图不会悄悄写错数据。要重新生成就跑这两个脚本。
 
 ### 2.4 确认代码提交与公开仓库链接都在 Writeup 里
 
