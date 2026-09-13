@@ -130,16 +130,26 @@ def main() -> int:
     # ---- 2. fetch the artifact ---------------------------------------------------
     print(f"[2/4] downloading output to {OUT_DIR}", flush=True)
     os.makedirs(OUT_DIR, exist_ok=True)
-    code, out = run([sys.executable, "-m", "kaggle", "kernels", "output", KERNEL,
-                     "-p", OUT_DIR, "-q"])
-    print("      " + out.strip().splitlines()[-1] if out.strip() else "      (no output)")
-
+    # The download is the step most exposed to a transient network fault (we have already
+    # seen one spurious "Permission 'kernels.get' was denied" from a healthy kernel), and
+    # aborting here would throw away a completed 11-hour run. Retry before giving up.
     sub_path = os.path.join(OUT_DIR, "submission.json")
+    for attempt in range(1, 6):
+        code, out = run([sys.executable, "-m", "kaggle", "kernels", "output", KERNEL,
+                         "-p", OUT_DIR, "-q"])
+        tail = out.strip().splitlines()[-1] if out.strip() else "      (no output)"
+        print(f"      attempt {attempt}: {tail}")
+        if os.path.isfile(sub_path) and os.path.getsize(sub_path) > 0:
+            break
+        time.sleep(30)
     if not os.path.isfile(sub_path):
-        print(f"ABORT: {sub_path} not found. Nothing submitted.")
+        print(f"ABORT: {sub_path} not found after 5 attempts. Nothing submitted.")
         return 1
     size_mb = os.path.getsize(sub_path) / 1e6
     print(f"      submission.json {size_mb:.3f} MB")
+    if size_mb <= 0:
+        print("ABORT: submission.json is empty. Nothing submitted.")
+        return 1
 
     # ---- 3. validate -------------------------------------------------------------
     print("[3/4] validating against the official rules", flush=True)
