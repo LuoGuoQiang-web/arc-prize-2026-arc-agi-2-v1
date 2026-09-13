@@ -164,10 +164,19 @@ def test_threshold_forces_survival() -> None:
         model, prompt, max_new_tokens=5, end_time=float("inf"),
         cache_budget_bytes=64 * 1024 * 1024,
     )
-    check("sub-threshold level still yields a candidate", len(tokens_list) == 1,
+    # A level where NOTHING clears the p>0.2 threshold. The coverage guard used to force
+    # only the arg-max token, which in an uncertain state is one repeated token -- the
+    # measured source of the degenerate single-colour grids that took 10 of 32 top
+    # attempt_1 slots on the evaluation sample. It now keeps the top-k alternatives while
+    # still putting the arg-max first.
+    check("sub-threshold level still yields a candidate", len(tokens_list) >= 1,
           str(tokens_list))
-    check("the forced branch is the arg-max ARC token",
+    check("the forced branch is the arg-max ARC token (still ranked first)",
           tokens_list and tokens_list[0][0] == 7, str(tokens_list))
+    check("sub-threshold level keeps ALTERNATIVES, not just the arg-max",
+          len(tokens_list) > 1, f"{len(tokens_list)} candidate(s): {tokens_list}")
+    check("the alternatives are distinct continuations",
+          len({tuple(t) for t in tokens_list}) == len(tokens_list))
     check("forced-branch counter incremented", stats.get("forced_branches", 0) >= 1,
           str(stats.get("forced_branches")))
 

@@ -134,8 +134,8 @@ from other sources.
 Two guards for coverage, both from measurement: the first implementation discarded its
 in-flight beams on timeout, so hard tasks returned an *empty* pool; and a beam cut off
 mid-row parses as ragged, so the strict parser threw the flushed candidates away. Flushing
-the live beams and recovering at the first incomplete row turned three empty pools into
-pools of 2, 1 and 8 and took a smoke run from **2/5 to 4/5**, with no change to the model.
+the live beams and recovering at the first incomplete row took a smoke run from **2/5 to
+4/5**, with no change to the model.
 
 Selection applies measured-sound priors — the cheapest precision lever, since they cost
 no extra generation. Only rules with a *perfect* record may filter, because filtering
@@ -186,7 +186,8 @@ single-colour grids produced by the model itself**, only one coming from the fal
 mechanism is the coverage guard in §2.4 — with nothing above p>0.2 we keep the arg-max,
 which in an uncertain state is one repeated token. That guard raised coverage and lowered
 precision at once, and more time cannot fix it: the model is collapsing, not running out
-of search.
+of search. The guard now keeps the top-k alternatives with the arg-max still ranked first,
+so a non-degenerate candidate exists for the prior to promote.
 
 For scale, the 2025-winning lineage scored 33.89 on 4 x L4 with ~4x our compute plus an
 SFT stage we did not reproduce; and at ~180 s per task, 240 tasks already need ~12 h, so

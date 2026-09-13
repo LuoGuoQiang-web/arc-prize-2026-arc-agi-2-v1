@@ -1124,8 +1124,20 @@ def turbo_dfs(model: Any, logits: Any, max_new_tokens: int, max_score: float,
         cand = [(parent_score + float(row[j]), int(ctx["arc_id_list"][j]))
                 for j in range(12) if float(row[j]) > max_score]
         if not cand:
-            j = int(np.argmax(row))
-            cand = [(parent_score + float(row[j]), int(ctx["arc_id_list"][j]))]
+            # Nothing cleared the per-token threshold. Keep the top-k alternatives rather
+            # than only the arg-max.
+            #
+            # MEASURED reason (crossref_attempts.py): forcing a single token is what
+            # produced the degenerate single-colour grids that occupied 10 of 32 top
+            # attempt_1 slots on the evaluation sample. In an uncertain state the arg-max
+            # is usually one repeated token, so the guard that exists to preserve coverage
+            # was also manufacturing collapses. Keeping a few alternatives preserves the
+            # coverage while leaving the rescorer a candidate that is not a collapse --
+            # which is what lets the measured degeneracy prior reject the uniform ones
+            # without emptying the pool.
+            order = np.argsort(-row)[: max(1, int(ctx["max_branches"]))]
+            cand = [(parent_score + float(row[j]), int(ctx["arc_id_list"][j]))
+                    for j in order]
             ctx["forced_branches"] += 1
         cand.sort(key=lambda t: -t[0])
         children.extend((s, tok, i) for s, tok in cand[: ctx["max_branches"]])
