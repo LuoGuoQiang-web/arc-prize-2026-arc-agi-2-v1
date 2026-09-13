@@ -1755,16 +1755,47 @@ def demonstrations_never_uniform(task: dict) -> bool:
     return True
 
 
-def apply_shape_prior(task: dict, test_input: Any, pool: Sequence[Candidate]
+def demonstrations_close_within_input_colours(task: dict) -> bool:
+    """True when every demonstration output uses only colours present in its own input.
+
+    MEASURED (``measure_colour_rule.py``): 153 applicable inputs on the evaluation split
+    with zero counterexamples, but **750 applicable inputs on the training split with ONE
+    counterexample** (``6cbe9eb8`` introduces colour 0). That makes it 99.87% rather than
+    100%, so under this project's rule -- only a perfect record may filter, because
+    filtering deletes the correct answer whenever the rule is wrong -- it is NOT enabled by
+    default.
+
+    It is worth keeping as an opt-in: a rule that is right 749 times in 750 would remove a
+    lot of wrong candidates for the price of one. Enabling it is an experiment, and the
+    counterexample is recorded here so nobody has to rediscover it.
+    """
+    demos = task.get("train", [])
+    if not demos:
+        return False
+    for demo in demos:
+        src = validate_grid(demo.get("input"))
+        dst = validate_grid(demo.get("output"))
+        if src is None or dst is None:
+            return False
+        if not set(dst.ravel().tolist()) <= set(src.ravel().tolist()):
+            return False
+    return True
+
+
+def apply_shape_prior(task: dict, test_input: Any, pool: Sequence[Candidate],
+                      use_shape_prior: bool = True, use_colour_closure: bool = False
                       ) -> Tuple[List[Candidate], int]:
     """Apply the measured-sound priors, dropping only candidates that cannot be right.
 
-    Two rules, both with a perfect record on both public splits:
+    Three rules, two of them with a perfect record on both public splits:
 
     * **shape** (:func:`predicted_output_shape`) -- identity 117/117 eval and 719/719
       train, uniform integer scale 56/56;
     * **degeneracy** (:func:`demonstrations_never_uniform`) -- 1219/1219 inputs, i.e. the
-      true answer was never a single-colour grid when no demonstration output was.
+      true answer was never a single-colour grid when no demonstration output was;
+    * **colour closure** -- 153/153 on the evaluation split but 749/750 on training, so it
+      is OFF by default and only runs when ``use_colour_closure`` is set. See
+      :func:`demonstrations_close_within_input_colours` for the counterexample.
 
     These are the cheapest precision levers available: they cost no extra generation,
     unlike inference-augmentation voting, which does not fit in a 12 h session at this
@@ -1779,18 +1810,28 @@ def apply_shape_prior(task: dict, test_input: Any, pool: Sequence[Candidate]
     if not kept:
         return kept, dropped
 
-    want = predicted_output_shape(task, test_input)
-    if want is not None:
-        matching = [c for c in kept if c.grid.shape == want]
-        if matching:
-            dropped += len(kept) - len(matching)
-            kept = matching
+    if use_shape_prior:
+        want = predicted_output_shape(task, test_input)
+        if want is not None:
+            matching = [c for c in kept if c.grid.shape == want]
+            if matching:
+                dropped += len(kept) - len(matching)
+                kept = matching
 
-    if demonstrations_never_uniform(task):
-        non_uniform = [c for c in kept if len(set(c.grid.ravel().tolist())) > 1]
-        if non_uniform:
-            dropped += len(kept) - len(non_uniform)
-            kept = non_uniform
+        if demonstrations_never_uniform(task):
+            non_uniform = [c for c in kept if len(set(c.grid.ravel().tolist())) > 1]
+            if non_uniform:
+                dropped += len(kept) - len(non_uniform)
+                kept = non_uniform
+
+    if use_colour_closure and demonstrations_close_within_input_colours(task):
+        src = validate_grid(test_input)
+        if src is not None:
+            allowed = set(src.ravel().tolist())
+            closed = [c for c in kept if set(c.grid.ravel().tolist()) <= allowed]
+            if closed:
+                dropped += len(kept) - len(closed)
+                kept = closed
 
     return kept, dropped
 
@@ -1946,7 +1987,7 @@ def solve_task(task: dict, task_id: str, model: Any, tokenizer: Any,
                rng: random.Random, do_ttt: bool = True, use_engine: bool = True,
                aug_override: Optional[int] = None, pool_prev: Optional[Sequence[Sequence[Candidate]]] = None,
                scheduler: Optional[BudgetScheduler] = None,
-               use_shape_prior: bool = True,
+               use_shape_prior: bool = True, use_colour_closure: bool = False,
                log_fn: Callable[[str], None] = print) -> TaskResult:
     """Full pipeline for one task: [TTT] -> DFS(+augs) -> pool -> rescore -> 2 attempts.
 
@@ -2112,12 +2153,16 @@ def solve_task(task: dict, task_id: str, model: Any, tokenizer: Any,
     result.sources = []
     for i in range(n_test):
         pool = dedupe_pool(pools[i])
-        if use_shape_prior:
-            pool, n_dropped = apply_shape_prior(task, tests[i]["input"], pool)
+        # Two independent switches: the sound priors (shape + degeneracy) and the
+        # experimental colour-closure rule. Either alone must be enough to run the filter,
+        # so guard on the disjunction rather than on the shape flag only.
+        if use_shape_prior or use_colour_closure:
+            pool, n_dropped = apply_shape_prior(task, tests[i]["input"], pool,
+                                                use_shape_prior=use_shape_prior,
+                                                use_colour_closure=use_colour_closure)
             if n_dropped:
-                log_fn(f"  [{task_id}] shape prior dropped {n_dropped} candidate(s) "
-                       f"for test {i} (demonstrations are shape-preserving, so a "
-                       f"different shape cannot be right)")
+                log_fn(f"  [{task_id}] prior dropped {n_dropped} candidate(s) "
+                       f"for test {i} (shape/degeneracy/colour rules)")
         pools[i] = pool
         a1, a2, s1, s2 = select_attempts(pool, fallbacks[i])
         v1 = validate_grid(a1)
@@ -2227,8 +2272,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                         help="when every demonstration preserves shape (measured: 67.5%% "
                              "of evaluation tasks, and the test output was then "
                              "input-shaped 117/117 times), drop candidates whose shape "
-                             "differs from the test input; skipped if it would empty "
-                             "the pool")
+                             "differs from the test input; also drops single-colour "
+                             "candidates when no demonstration output is uniform "
+                             "(1219/1219 measured). Skipped if it would empty the pool")
+    parser.add_argument("--colour-closure", action=argparse.BooleanOptionalAction,
+                        default=False,
+                        help="EXPERIMENTAL, off by default: also drop candidates that "
+                             "introduce a colour absent from the test input. Measured "
+                             "153/153 on the evaluation split but 749/750 on training, "
+                             "so it is not a perfect record; see "
+                             "demonstrations_close_within_input_colours")
     parser.add_argument("--num-shards", type=int, default=1,
                         help="split the task list into this many interleaved shards "
                              "(2 concurrent 12 h GPU sessions is Kaggle's ceiling)")
@@ -2396,7 +2449,7 @@ def run_uniform(ctx: RunContext) -> None:
         try:
             res = solve_task(ctx.tasks[tid], tid, ctx.model, ctx.tokenizer, ctx.engine,
                              args, slice_seconds, ctx.rng, do_ttt=True, use_engine=True,
-                             use_shape_prior=args.shape_prior,
+                             use_shape_prior=args.shape_prior, use_colour_closure=args.colour_closure,
                              scheduler=scheduler, log_fn=ctx.log)
         except Exception as exc:
             res = _task_error_result(ctx, tid, exc)
@@ -2469,7 +2522,7 @@ def run_cascade(ctx: RunContext) -> None:
         try:
             res = solve_task(ctx.tasks[tid], tid, ctx.model, ctx.tokenizer, ctx.engine,
                              args, slice_a, ctx.rng, do_ttt=False, use_engine=False,
-                             use_shape_prior=args.shape_prior,
+                             use_shape_prior=args.shape_prior, use_colour_closure=args.colour_closure,
                              aug_override=aug_a, scheduler=scheduler, log_fn=ctx.log)
         except Exception as exc:
             res = _task_error_result(ctx, tid, exc)
@@ -2517,7 +2570,7 @@ def run_cascade(ctx: RunContext) -> None:
         try:
             res = solve_task(ctx.tasks[tid], tid, ctx.model, ctx.tokenizer, ctx.engine,
                              args, slice_b, ctx.rng, do_ttt=True, use_engine=False,
-                             use_shape_prior=args.shape_prior,
+                             use_shape_prior=args.shape_prior, use_colour_closure=args.colour_closure,
                              pool_prev=prev_pools, scheduler=scheduler, log_fn=ctx.log)
         except Exception as exc:
             ctx.log(f"  ! stage B task {tid} failed: {type(exc).__name__}: {exc}")

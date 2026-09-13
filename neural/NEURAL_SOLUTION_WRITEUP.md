@@ -105,9 +105,10 @@ no extra generation. Only rules with a *perfect* record may filter, because filt
 deletes the correct answer whenever the rule is wrong: identity is 117/117 and 719/719
 across the public splits, a uniform integer scale rule is 56/56, and rejecting
 single-colour candidates when no demonstration output is itself uniform is 1219/1219.
-Transpose (95.1%/97.8%) and constant-output-shape (66.1%/95.3%) look usable and are
-deliberately excluded — every counterexample for both has an input-shaped answer. Each
-rule is skipped if it would empty the pool; we verified soundness, not score effect.
+Transpose (95.1%/97.8%), constant-output-shape (66.1%/95.3%) and colour closure
+(100%/99.87%) look usable and are all excluded — the first two always fail on a task whose
+answer is input-shaped, and colour closure fails once in 750. Each rule is skipped if it
+would empty the pool; we verified soundness, not score effect.
 
 ### 2.5 Cascade scheduling over a fixed 12-hour session
 

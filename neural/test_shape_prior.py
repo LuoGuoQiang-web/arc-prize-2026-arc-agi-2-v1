@@ -154,7 +154,60 @@ kept_g, dropped_g = m.apply_shape_prior(nonuni, [[8, 9]], alluni)
 check("the degeneracy filter never empties the pool",
       len(kept_g) == 2 and dropped_g == 0, f"kept={len(kept_g)}")
 
-# 7. re-verify the measured claim through the real function on real data
+# 7. the EXPERIMENTAL colour-closure rule (off by default, and here is why)
+closed = {"train": [{"input": [[1, 2], [3, 4]], "output": [[1, 1], [2, 2]]}],
+          "test": [{"input": [[5, 6]]}]}
+open_rule = {"train": [{"input": [[1, 2]], "output": [[7, 7]]}],      # introduces colour 7
+             "test": [{"input": [[5, 6]]}]}
+
+check("colour closure detects the applicable case",
+      m.demonstrations_close_within_input_colours(closed) is True)
+check("colour closure is inapplicable when a demo output adds a colour",
+      m.demonstrations_close_within_input_colours(open_rule) is False)
+
+# Candidates must have the shape the sound prior predicts (the test input's, 1x2), and
+# colour closure is judged against the TEST INPUT's colours ({5,6}) -- not the demos'.
+colour_pool = [cand([[5, 5]]), cand([[9, 9]])]
+
+kept_off, dropped_off = m.apply_shape_prior(closed, [[5, 6]], colour_pool)
+check("colour closure is OFF by default (candidate kept)",
+      dropped_off == 0 and len(kept_off) == 2, f"dropped={dropped_off}")
+
+kept_on, dropped_on = m.apply_shape_prior(closed, [[5, 6]], colour_pool,
+                                          use_colour_closure=True)
+check("...and drops the colour-violating candidate when explicitly enabled",
+      dropped_on == 1 and len(kept_on) == 1, f"dropped={dropped_on}")
+check("the survivor obeys colour closure",
+      set(kept_on[0].grid.ravel().tolist()) <= {5, 6},
+      f"survivor={kept_on[0].grid.tolist()}")
+
+# coverage guard
+all_bad = [cand([[9, 9]]), cand([[8, 8]])]
+kept_cg, dropped_cg = m.apply_shape_prior(closed, [[5, 6]], all_bad,
+                                          use_colour_closure=True)
+check("colour closure never empties the pool", len(kept_cg) == 2 and dropped_cg == 0)
+
+# the docstring claims a specific training counterexample -- verify it on the data
+tr_ch = os.path.join(COMP, "arc-agi_training_challenges.json")
+tr_sol = os.path.join(COMP, "arc-agi_training_solutions.json")
+if os.path.isfile(tr_ch) and os.path.isfile(tr_sol):
+    ch = json.load(open(tr_ch, encoding="utf-8"))
+    sol = json.load(open(tr_sol, encoding="utf-8"))
+    tid = "6cbe9eb8"
+    task = ch.get(tid)
+    if task is None:
+        print(f"(skip: {tid} not in the training split)")
+    else:
+        applies = m.demonstrations_close_within_input_colours(task)
+        truth = sol[tid][0]
+        tin = task["test"][0]["input"]
+        added = set(c for row in truth for c in row) - set(c for row in tin for c in row)
+        check("the documented counterexample is real: the rule applies",
+              applies is True)
+        check("...yet the true output introduces a colour, so the rule is UNSOUND",
+              bool(added), f"added={sorted(added)}")
+
+# 8. re-verify the measured claim through the real function on real data
 ch_path = os.path.join(COMP, "arc-agi_evaluation_challenges.json")
 sol_path = os.path.join(COMP, "arc-agi_evaluation_solutions.json")
 if os.path.isfile(ch_path) and os.path.isfile(sol_path):
