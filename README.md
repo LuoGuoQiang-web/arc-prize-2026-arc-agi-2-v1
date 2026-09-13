@@ -273,6 +273,16 @@ python tools/build_notebook.py         # 改完引擎后重新生成 .ipynb
 
 **复验**：修复后重推 kernel（version 2），日志显示 `VALID: True | 题目数: 240`、`rebuild from checkpoint: 240/240 tasks | valid=True`，且 dev 写到 `arcprize/dev_submission.json`（不再触碰顶层文件）。
 
+**文件级证据**（`kaggle kernels output` 下载 v2 的产物后逐项审计）：
+
+| 检查 | v1（被拒） | v2（修复后） |
+|---|---|---|
+| `/kaggle/working/submission.json` 题数 | **120**（被 dev 覆盖） | **240** ✓ |
+| 文件大小 | 299,340 B | 262,526 B |
+| test input（attempts）条目 | 344 | **259** ✓ |
+| 网格尺寸范围 | 1–30 | **1–30** ✓ |
+| 格式违规项 | 题数不符 | **0** ✓ |
+
 > 教训：本地无法复现目标环境的**路径分支**时，测试必须显式构造该分支——否则"全绿"是假的。
 
 ### 12.6 复现命令
