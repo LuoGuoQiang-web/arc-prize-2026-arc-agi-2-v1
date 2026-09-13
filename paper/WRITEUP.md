@@ -58,7 +58,7 @@ Coverage—the fraction of tasks admitting at least one verified program—colla
 
 Binary coverage hides the shape of the failure. Refitting each chain on k−1 demonstrations and testing the held-out one yields a *coverage curve*. On training it decays gradually (2.6% → 2.4% → 1.8% → 0.4% → 0%), so the vocabulary sits near the boundary for many tasks. On eval the curve is **identically zero at every depth** (Figure 2): across 37,951 chain–task pairs, not one chain generalises to even a single held-out demonstration on any of the 120 tasks. Nor is this one design's artefact: all five search spaces of §2—structurally unrelated, with training coverage 1.6–4.3%—validate on **exactly 0/120** eval tasks. The vocabulary is not slightly too small for eval; it is orthogonal to it.
 
-The organisers' 240-task test split (inputs only) behaves differently: union coverage there is **15/240 (6.2%)**, which—given 96–100% precision for the validating families—is an expectation near 4.7% rather than zero. That split is closer to our vocabulary than the public eval, and unlike eval we cannot verify it, because its labels are withheld.
+**Correction (2026-09-13):** an earlier draft reported 15/240 union coverage on the organisers' test split and an expectation near 4.7%. That was wrong — the shipped `arc-agi_test_challenges.json` is a **placeholder** (all 240 ids are byte-identical copies of training tasks; the real file appears only at rerun). The public eval, where coverage is **0/120**, remains our only honest signal.
 
 ### 3.3 Shape inference is not the bottleneck
 
@@ -107,7 +107,7 @@ We report no improvement on the public evaluation split: **0.000% (0/167)** for 
 
 ## 7. Reproducibility
 
-Runs on CPU in seconds. The submission comes from a Kaggle notebook whose embedded engine is byte-checked against the repository source at build time; 39 self-tests, a full dry-run, and an environment-faithful simulation of the submission path (which catches Kaggle-only branches) all pass; one script re-verifies every headline number. Data: official ARC-AGI-2 release (Apache-2.0); code MIT-0; no weights, no data, no network.
+Runs on CPU in seconds. The submission comes from a Kaggle notebook whose embedded engine is byte-checked against the repository source at build time; 39 self-tests, a full dry-run, and an environment-faithful simulation of the submission path (which catches Kaggle-only branches) all pass; one script re-verifies every headline number. Data: official ARC-AGI-2 release (Apache-2.0); code MIT-0.
 
 **Links.** Code (MIT-0): `github.com/LuoGuoQiang-web/arc-prize-2026-arc-agi-2-v1`. Notebook: `luoguoqiang/arc-prize-2026-arc-agi-2-v1-diagnostic-engine` on Kaggle. Linked code submission: **56199696** (`submission.json`, 240 tasks, schema-valid).
 
