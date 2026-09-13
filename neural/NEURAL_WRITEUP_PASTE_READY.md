@@ -1,3 +1,40 @@
+# Paste-ready: ARC-AGI-2 Solution Writeup
+
+> 直接整段粘贴到 Kaggle Writeup 编辑器即可，正文无需改动。
+>
+> **Title**
+> A Licence-Clean Test-Time-Training Solver for ARC-AGI-2, and Why the Symbolic Floor Is Exactly Zero
+>
+> **Subtitle**
+> Coverage, not search, is the binding constraint: we measure the symbolic floor at exactly 0/120, the fallback layer at exactly 0, and a licence-clean LoRA test-time-training pipeline at 4.17% with 100% candidate coverage.
+>
+> **Track**
+> ARC-AGI-2 Solution Writeup (companion to the Paper Track diagnostic
+> *"When Cheap Transformations Vanish"*). Word count of the body below: 1390 (limit 1500).
+>
+> **Project Links — required by the rules**
+> - Public notebook (this is the code submission and the notebook Kaggle re-runs):
+>   https://www.kaggle.com/code/luoguoqiang/arc26-submit-full
+> - Version 1 of that notebook is the submitted version.
+> - Open-source repository (MIT-0):
+>   https://github.com/LuoGuoQiang-web/arc-prize-2026-arc-agi-2-v1
+> - The neural pipeline lives in `neural/` of that repository (solver, 4 test suites,
+>   the Kaggle GPU recipe, and the submission gate).
+>
+> **Media Gallery — upload both images**
+> 1. `cover.png` — cover image (required)
+> 2. `coverage_curve.png` — coverage-curve figure
+>
+> **Checklist before pressing Submit**
+> - [ ] Pasted the body below (everything from the first `#` heading onwards)
+> - [ ] Cover image uploaded
+> - [ ] Public notebook linked
+> - [ ] Code submission linked (ref for the current submission is recorded in
+>       `work/arc_w1/NEURAL_ROUTE_STATUS.md`)
+> - [ ] Repository link present
+
+---
+
 # A Licence-Clean Test-Time-Training Solver for ARC-AGI-2, and Why the Symbolic Floor Is Exactly Zero
 
 **Track:** ARC-AGI-2 Solution Writeup (companion to the Paper Track diagnostic

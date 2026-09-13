@@ -171,6 +171,17 @@ STAGE_A_MIN_SLICE = 8.0
 STAGE_B_MIN_SLICE = 45.0
 STAGE_C_RESERVE_MIN = 300.0     # always leave room for the symbolic backfill
 
+#: Fraction of the usable budget Stage A (the no-TTT sweep) may consume.
+#:
+#: MEASURED BUG (evaluation split, 24 tasks, 5400 s budget): Stage A sized each task's
+#: slice as "share of the WHOLE remaining budget", so it inevitably ate everything and
+#: the run ended with
+#:     [stage B] stopping: reserve reached (remaining=556s)
+#: Stage B -- the test-time-training half of the pipeline -- therefore never executed at
+#: all, and the 4.17% that run measured was produced entirely without TTT. Capping
+#: Stage A's total spend is what makes Stage B reachable.
+STAGE_A_BUDGET_SHARE = 0.45
+
 SPLIT_FILES: Dict[str, Tuple[str, Optional[str]]] = {
     "test": ("arc-agi_test_challenges.json", None),
     "training": ("arc-agi_training_challenges.json", "arc-agi_training_solutions.json"),
@@ -1335,17 +1346,27 @@ def calc_scores(queries: Sequence[str], answers: Sequence[str], tokenizer: Any,
     scores: List[float] = [float("inf")] * len(queries)
     batches = _nll_batches([len(f) for f in full_ids])
     model.eval()
-    for batch in batches:
+    def _score_batch(batch: Sequence[int]) -> None:
+        """Score one micro-batch in place, halving it on CUDA OOM and retrying.
+
+        A 30x30 candidate behind a long demonstration prompt can exceed what is left of a
+        14.6 GiB card. The first version failed the *entire* batch on OOM, so every
+        candidate in it stayed unscored and ranked last -- a silent precision loss. The
+        observed failures (measured on the evaluation split) tried to allocate ~3.7 GiB.
+        Halving down to a single candidate keeps the ranking intact for the price of a
+        little time.
+        """
+        if not batch:
+            return
         width = max(len(full_ids[i]) for i in batch)
-        ids = torch.full((len(batch), width), pad_id, dtype=torch.long, device=device)
-        mask = torch.zeros((len(batch), width), dtype=torch.long, device=device)
-        for row, i in enumerate(batch):
-            ids[row, : len(full_ids[i])] = torch.tensor(full_ids[i], dtype=torch.long,
-                                                        device=device)
-            mask[row, : len(full_ids[i])] = 1
-        out = None
-        logits = None
+        ids = mask = out = logits = None
         try:
+            ids = torch.full((len(batch), width), pad_id, dtype=torch.long, device=device)
+            mask = torch.zeros((len(batch), width), dtype=torch.long, device=device)
+            for row, i in enumerate(batch):
+                ids[row, : len(full_ids[i])] = torch.tensor(full_ids[i], dtype=torch.long,
+                                                            device=device)
+                mask[row, : len(full_ids[i])] = 1
             with torch.inference_mode():
                 out = model(input_ids=ids, attention_mask=mask, use_cache=False,
                             return_dict=True)
@@ -1366,10 +1387,25 @@ def calc_scores(queries: Sequence[str], answers: Sequence[str], tokenizer: Any,
                     picked = logits[row][pred_pos, targets]      # logit of the target
                     norm = log_norm[row][pred_pos]               # full-vocab normaliser
                     scores[i] = float((-(picked - norm)).mean().item())
-        except Exception as exc:  # keep going: unscored candidates rank last
-            log_fn(f"    rescoring batch failed: {exc}")
+        except Exception as exc:
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            if len(batch) == 1:
+                log_fn(f"    rescoring single candidate failed: {type(exc).__name__}: "
+                       f"{str(exc)[:90]}")
+                return
+            mid = len(batch) // 2
+            log_fn(f"    rescoring batch of {len(batch)} failed ({type(exc).__name__}); "
+                   f"splitting {mid}+{len(batch) - mid}")
+            _score_batch(batch[:mid])
+            _score_batch(batch[mid:])
         finally:
             del ids, mask, out, logits
+
+    for batch in batches:
+        _score_batch(batch)
     gc.collect()
     try:
         torch.cuda.empty_cache()
@@ -1998,6 +2034,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--limit", type=int, default=0,
                         help="only run the first N tasks (0 = all)")
+    parser.add_argument("--stage-a-share", type=float, default=STAGE_A_BUDGET_SHARE,
+                        help="fraction of the usable budget the no-TTT sweep may spend; "
+                             "the rest is reserved for Stage B (TTT) refinement")
     parser.add_argument("--num-shards", type=int, default=1,
                         help="split the task list into this many interleaved shards "
                              "(2 concurrent 12 h GPU sessions is Kaggle's ceiling)")
@@ -2210,15 +2249,25 @@ def run_cascade(ctx: RunContext) -> None:
     # ---------------- Stage A: cheap full sweep (do_ttt=False) --------------------
     stage_t0 = time.time()
     aug_a = max(1, min(args.aug_infer, 2))  # 2 augmentations give an agreement signal
+    # Cap what the sweep may spend so Stage B (TTT) is actually reachable. Without this
+    # the sweep serialises the whole budget into 150 s slices and Stage B never runs.
+    stage_a_deadline = stage_t0 + args.stage_a_share * max(
+        0.0, scheduler.remaining() - scheduler.reserve_seconds - stage_c_reserve)
+    ctx.log(f"[stage A] budget cap {args.stage_a_share:.0%} -> "
+            f"{stage_a_deadline - stage_t0:.0f}s")
     n_stage_a = 0
     for index, tid in enumerate(ctx.task_ids):
         if scheduler.expired:
             ctx.log(f"[stage A] budget exhausted at {index + 1}/{len(ctx.task_ids)}")
             break
+        stage_a_left = stage_a_deadline - time.time()
+        if n_stage_a > 0 and stage_a_left <= STAGE_A_MIN_SLICE:
+            ctx.log(f"[stage A] stage-A share spent after {n_stage_a}/"
+                    f"{len(ctx.task_ids)} tasks; handing the rest to stage B")
+            break
         remaining_after_reserve = max(
             STAGE_A_MIN_SLICE,
-            (scheduler.remaining() - scheduler.reserve_seconds - stage_c_reserve)
-            / max(1, len(ctx.task_ids) - index),
+            max(0.0, stage_a_left) / max(1, len(ctx.task_ids) - index),
         )
         slice_a = max(STAGE_A_MIN_SLICE,
                       min(scheduler.cheap_slice(index), remaining_after_reserve))

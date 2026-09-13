@@ -183,6 +183,48 @@ T4x2 单会话，预算 5400 s。
 这与 §5.1/§5.2 的测量完全一致：符号层和保底层都恰好为 0，所以「有真实神经候选」
 是唯一可能得分的题，而这次每一题都属于这一类。
 
+### 5.5 ⚠ 重要更正：那次 4.17% 完全不含 TTT
+
+评测日志末尾是：
+
+```
+[stage B] stopping: reserve reached (remaining=556s)
+```
+
+**Stage A（零样本扫描）吃掉了全部预算，Stage B（TTT 精修）从未进入。** 根因：
+Stage A 把每题的时长算成「剩余**全部**预算的公平份额」：
+
+```python
+remaining_after_reserve = (remaining - reserve - stage_c_reserve) / tasks_left
+slice_a = min(cheap_slice(index), remaining_after_reserve)
+```
+
+于是它必然吃光预算，Stage B 永远拿不到份额。**所以 4.17% 是「SFT 模型 + 约束 DFS +
+NLL 重排 + 级联」的成绩，测试时训练贡献为 0。**
+
+这是一处必须报告的缺陷，不是细节。已修复：新增 `STAGE_A_BUDGET_SHARE = 0.45`
+与 `--stage-a-share`，把扫描限制在可用预算的 45%，其余留给 Stage B。
+
+### 5.6 同一次日志暴露的第二个缺陷：重排 OOM
+
+3 个任务上出现：
+
+```
+rescoring batch failed: CUDA out of memory. Tried to allocate 3.75 GiB
+```
+
+14.6 GiB 卡上整批重排失败 → **该批所有候选都没被打分，排序直接退化**。
+已修复：把单批打分抽成递归函数，OOM 时二分重试直到单条候选。
+
+### 5.7 第三个缺陷：时间片单位
+
+时间片按**每个 test input** 计，所以有 2 个 test input 的题实际跑了约 270s，
+而调度器以为只有 150s——这正是扫描能吃掉整个会话的原因。
+
+**这三个缺陷 + §5.4 的 100% 覆盖率，构成了「精度 vs 覆盖」之外的第三条证据线：
+子系统静默失效（stage 未执行、批次被丢弃、单位算错）不会被任何分数变化暴露，
+只能靠读日志发现。**
+
 参照：2025 冠军血统在同一基准上是 **33.89**，用 4×L4、每任务约 4 倍算力，
 并且包含我们没有复现的合成数据 SFT 阶段（我们直接用公开的 Apache-2.0 权重）。
 
