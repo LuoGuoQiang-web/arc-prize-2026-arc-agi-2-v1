@@ -130,6 +130,35 @@
 
 **算力约束**：两个运行结束后配额约剩 5h，不足以再跑一次 240 题的完整会话；配额 2026-09-19 刷新，赛程至 2026-11-02，时间充裕。
 
+### I.1 下一个动作（两个运行结束、槽位空出后立即执行）
+
+**一次受控对比，直接回答上面 1–4 四个问题。** 用与 4.17% 那次**完全相同**的抽样
+（评测集均匀间隔 24 题），只改代码：
+
+```powershell
+python work/arc_w1/kpush.py work/arc_w1/solver/arc26_solver.py `
+  --slug luoguoqiang/arc26-eval-fixed `
+  --title "arc26 eval fixed" `
+  --model sorokin/qwen3_4b_grids15_sft139/transformers/bfloat16/1 `
+  --competition arc-prize-2026-arc-agi-2 `
+  --timeout 9000 `
+  --args "--split evaluation --num-shards 5 --shard-index 0 --time-budget-seconds 5400 --calibrate-tasks 3 --aug-train 2 --aug-infer 1"
+```
+
+判定标准（读 `kernel_stdout.log`，不看分数就够了）：
+
+| 检查 | 期望 |
+|---|---|
+| `[stage A] budget cap 45% -> ...s` 出现 | E1 修复生效 |
+| `[stage B] ...` 有任务记录，且含 `TTT N steps` | **Stage B 真的运行了** |
+| `[stage A] stage-A share spent after N/24` 出现 | 扫描被正确截断 |
+| 无 `rescoring batch of ... failed` 且无 `single candidate failed` | E2 修复生效（或至少不再整批丢弃） |
+| `solving 1/24` | 与 4.17% 对比 |
+
+**无论结果好坏都必须如实记录**：若 Stage B 运行后准确率未升，那正是「TTT 在这个
+预算下不划算」的证据，比含糊其辞有价值。
+
+
 ---
 
 ## J. 未达成项（如实记录）
